@@ -1,0 +1,22 @@
+{
+  "Bengaluru": {
+    "vendor_name": "Bengaluru supplier",
+    "vendor_email": ["logincandy44+bengaluru@gmail.com"],
+    "category_overrides": {}
+  },
+  "Mumbai": {
+    "vendor_name": "Mumbai supplier",
+    "vendor_email": ["logincandy44+mumbai@gmail.com"],
+    "category_overrides": {}
+  },
+  "Delhi": {
+    "vendor_name": "Delhi supplier",
+    "vendor_email": ["logincandy44+delhi@gmail.com"],
+    "category_overrides": {}
+  },
+  "Chennai": {
+    "vendor_name": "Chennai supplier",
+    "vendor_email": ["logincandy44+chennai@gmail.com"],
+    "category_overrides": {}
+  }
+}

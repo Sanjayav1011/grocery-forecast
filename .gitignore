@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.zip
+data/*.csv
+outputs/
+models/*.txt
+.env
+.DS_Store
+models/*.json

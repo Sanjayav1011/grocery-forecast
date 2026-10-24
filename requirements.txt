@@ -1,0 +1,9 @@
+# Direct dependencies, pinned from the working .venv (Python 3.13).
+lightgbm==4.7.0
+matplotlib==3.11.2
+numpy==2.5.4
+optuna==5.0.0
+pandas==3.1.0
+scikit-learn==1.9.1  # required by lightgbm's scikit-learn API (LGBMRegressor)
+pytest==9.1.1
+certifi>=2024.2.2  # CA bundle for SMTP STARTTLS (alerts.py) on macOS
