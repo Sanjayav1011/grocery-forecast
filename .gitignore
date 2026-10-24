@@ -7,3 +7,5 @@ models/*.txt
 .env
 .DS_Store
 models/*.json
+project_error_report.md
+!models/params_*.json

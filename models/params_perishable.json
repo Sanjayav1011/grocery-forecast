@@ -1,0 +1,43 @@
+{
+  "segment": "perishable",
+  "params": {
+    "objective": "tweedie",
+    "tweedie_variance_power": 1.4436628387595156,
+    "learning_rate": 0.015046038949735878,
+    "num_leaves": 30,
+    "max_depth": 5,
+    "min_child_samples": 197,
+    "subsample": 0.7219472968418418,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.9206438499787184,
+    "reg_alpha": 9.009937010968205,
+    "reg_lambda": 0.008000113053331807,
+    "n_estimators": 1978
+  },
+  "cv_folds": [
+    {
+      "fold": 1,
+      "WAPE_%": 10.02,
+      "best_iteration": 1291
+    },
+    {
+      "fold": 2,
+      "WAPE_%": 10.7,
+      "best_iteration": 2082
+    },
+    {
+      "fold": 3,
+      "WAPE_%": 9.94,
+      "best_iteration": 2077
+    },
+    {
+      "fold": 4,
+      "WAPE_%": 10.02,
+      "best_iteration": 2461
+    }
+  ],
+  "tuning": {
+    "n_trials": 120,
+    "seconds": 1162.3
+  }
+}

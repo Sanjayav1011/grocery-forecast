@@ -1,0 +1,43 @@
+{
+  "segment": "nonperishable",
+  "params": {
+    "objective": "tweedie",
+    "tweedie_variance_power": 1.3007579373238245,
+    "learning_rate": 0.015087908807997647,
+    "num_leaves": 38,
+    "max_depth": 4,
+    "min_child_samples": 21,
+    "subsample": 0.7191518712946011,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.6987787823363422,
+    "reg_alpha": 5.20931102430001,
+    "reg_lambda": 0.11382217320682449,
+    "n_estimators": 2520
+  },
+  "cv_folds": [
+    {
+      "fold": 1,
+      "WAPE_%": 9.78,
+      "best_iteration": 2691
+    },
+    {
+      "fold": 2,
+      "WAPE_%": 9.99,
+      "best_iteration": 1912
+    },
+    {
+      "fold": 3,
+      "WAPE_%": 9.91,
+      "best_iteration": 2998
+    },
+    {
+      "fold": 4,
+      "WAPE_%": 9.9,
+      "best_iteration": 2479
+    }
+  ],
+  "tuning": {
+    "n_trials": 120,
+    "seconds": 856.2
+  }
+}
