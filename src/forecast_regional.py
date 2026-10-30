@@ -10,9 +10,13 @@ Demand forecasts for every catalog product x city, from the trained models.
     standardized (log MRP, log pack size, log brand popularity), preferring
     the same BigBasket sub-category: an inverse-distance weighted mean of the
     analogs' forecasts, each adjusted for price with the same elasticity the
-    generator uses: x exp(PRICE_ELASTICITY x (log_mrp_analog - log_mrp_product)).
+    generator uses: x exp(PRICE_ELASTICITY x (log_mrp_analog - log_mrp_product)),
+    clipped to PRICE_ADJ_RANGE so a near-zero price cannot blow it up.
   - Unmapped products and non-food items mis-filed in food categories are
     excluded and counted.
+  - Untracked free samples and products with an MRP below MIN_MRP get no
+    analog forecast; they are listed in data/bigbasket_not_forecast.csv
+    with reason "not forecast: free sample" or "not forecast: no price".
 
 Also writes recent_daily, the trailing RECENT_DAYS mean demand (actual for
 tracked products, analog-estimated otherwise), which the regional risk
@@ -34,7 +38,11 @@ from config import DATA_DIR, FEATURE_COLS, LEAD_TIME_DAYS, MODELS_DIR, PRICE_ELA
 from sample_products import SAMPLED_PRODUCTS_PATH, prepare_catalog
 
 OUT_PATH = DATA_DIR / "bigbasket_regional_forecast.csv"
+NOT_FORECAST_PATH = DATA_DIR / "bigbasket_not_forecast.csv"
 K_ANALOGS = 5
+MIN_MRP = 5.0  # rupees; below this the price says nothing about demand
+PRICE_ADJ_RANGE = (0.5, 2.0)
+FREE_SAMPLE_PATTERN = r"(?i)\bfree\s*sample\b"
 HISTORY_DAYS = 400  # covers lag_364 plus the 28-day rolling windows
 RECENT_DAYS = 28
 DIRECT, ANALOG = "lightgbm_direct", f"lightgbm_analog_k{K_ANALOGS}"
@@ -109,6 +117,7 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
         weights = 1.0 / (nearest + 1e-3)
         pool_log_mrp = np.log(pool["mrp_filled"].to_numpy())[order]
         price_adj = np.exp(PRICE_ELASTICITY * (pool_log_mrp - np.log(rows["mrp_filled"].to_numpy())[:, None]))
+        price_adj = np.clip(price_adj, *PRICE_ADJ_RANGE)
         targets = [position[index] for index in rows.index]
         for col in value_cols:
             pool_values = by_sku[col].loc[pool["sku_id"]].to_numpy()[order]  # (rows, K, cities)
@@ -136,8 +145,27 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
     return out
 
 
+def not_forecast_reasons(products, tracked_ids):
+    """
+    "not forecast: ..." reason per untracked product that must not be
+    forecast by analogs, empty string otherwise. Uses the parsed MRP, so a
+    missing MRP (filled with the category median) is not "no price", but
+    an MRP of 0 is.
+    """
+    untracked = ~products["sku_id"].isin(tracked_ids)
+    free_sample = products["SKU Name"].fillna("").str.contains(FREE_SAMPLE_PATTERN)
+    no_price = products["mrp"] < MIN_MRP
+    reasons = np.select([untracked & free_sample, untracked & no_price],
+                        ["not forecast: free sample", "not forecast: no price"], default="")
+    return pd.Series(reasons, index=products.index)
+
+
 def catalog_products():
-    """Mapped, food-checked catalog products with filled MRP and pack size; prints exclusion counts."""
+    """
+    Mapped, food-checked catalog products with filled MRP and pack size, and
+    the products left out of analog forecasting (with a reason); prints
+    exclusion counts.
+    """
     catalog = prepare_catalog().rename(columns={"model_category": "category", "Sub-Category": "bb_subcategory"})
     unmapped = catalog["category"].isna()
     excluded = catalog["excluded_non_food"]
@@ -152,7 +180,15 @@ def catalog_products():
     by_category = products.groupby("category")
     products["mrp_filled"] = products["mrp"].where(products["mrp"] > 0).fillna(by_category["mrp"].transform("median"))
     products["pack_filled"] = products["pack_size_value"].fillna(by_category["pack_size_value"].transform("median"))
-    return products
+
+    products["reason"] = not_forecast_reasons(products, tracked)
+    skipped = products[products["reason"] != ""]
+    not_forecast = skipped.rename(columns={"SKU Name": "product_name"})[
+        ["sku_id", "product_name", "brand", "category", "mrp", "reason"]]
+    for reason, count in not_forecast["reason"].value_counts().items():
+        print(f"  {count:,} {reason}")
+    products = products.drop(index=skipped.index, columns="reason")
+    return products, not_forecast
 
 
 def main():
@@ -162,7 +198,9 @@ def main():
     args = parser.parse_args()
 
     tracked_forecast, as_of = score_tracked(args.as_of)
-    forecast = analog_forecasts(catalog_products(), tracked_forecast)
+    products, not_forecast = catalog_products()
+    forecast = analog_forecasts(products, tracked_forecast)
+    not_forecast.to_csv(NOT_FORECAST_PATH, index=False)
     forecast["forecast_start"] = (as_of + pd.Timedelta(days=1)).date().isoformat()
     forecast["forecast_end"] = (as_of + pd.Timedelta(days=LEAD_TIME_DAYS)).date().isoformat()
     forecast[OUTPUT_COLS].to_csv(args.output, index=False)
@@ -170,6 +208,7 @@ def main():
     print(f"Saved {len(forecast):,} product x city forecasts ({counts.get(DIRECT, 0):,} tracked, "
           f"{counts.get(ANALOG, 0):,} analog products) for {forecast['forecast_start'].iloc[0]}.."
           f"{forecast['forecast_end'].iloc[0]} to {args.output}")
+    print(f"Saved {len(not_forecast):,} products not forecast (free sample / no price) to {NOT_FORECAST_PATH}")
 
 
 if __name__ == "__main__":

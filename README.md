@@ -35,12 +35,12 @@ BigBasket catalog (data/archive_products.csv)
 | `src/build_features.py` | Unconstrained demand target, features, categorical encodings |
 | `src/metrics.py` | MAE, RMSE, WAPE, MASE, Bias% (MAPE kept as legacy) |
 | `src/train_model.py` | Time-series CV, Optuna tuning, final-test evaluation, model risk report |
-| `src/forecast_regional.py` | Catalog-wide forecasts per city |
+| `src/forecast_regional.py` | Catalog-wide forecasts per city; free samples and sub-₹5 products listed in `data/bigbasket_not_forecast.csv` |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
 | `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -144,8 +144,12 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
 - WAPE by category on the final test: 10.0–10.5% for all 8 categories.
 - `true_demand` is the synthetic demand before the stock cap; it exists only
   because the data is synthetic.
-- Coverage: 56,245 of 57,013 catalog products (98.7%) get a forecast in every
-  city — 344 directly from the models, the rest by analogs.
+- Coverage: 56,227 of 57,013 catalog products (98.6%) get a forecast in every
+  city — 344 directly from the models, the rest by analogs. 762 products fit
+  no model category, 6 are non-food items in food categories, and 18 are
+  "not forecast": 1 free sample and 17 with an MRP below ₹5 (paper bags,
+  labels, sachets, ₹4 biscuits), listed with their reason in
+  `data/bigbasket_not_forecast.csv`.
 - Risk split: about 97.5% of tracked product-days are "normal" over the test
   window; 99.8% of catalog products are "normal" for the coming week.
 
@@ -195,7 +199,11 @@ parameters.
   above (`stock_source = "simulated"`).
 - **Analog forecasts share their analogs' patterns.** 99% of catalog products
   are forecast from 5 tracked neighbours, so they inherit those products'
-  festival and weekday shapes, scaled only for price.
+  festival and weekday shapes, scaled only for price. The price factor is
+  clipped to 0.5–2×, so an analog forecast always stays within half to twice
+  its neighbours' weighted mean. Before this clip a ₹0.01 free sample was
+  forecast at ~20,000 units a day. About 45% of catalog products are priced
+  far enough from their analogs to hit the clip.
 - **Category stand-ins.** The catalog has no fresh produce: frozen vegetables
   stand in for "vegetables" and dry fruits for "fruits". "Snacks" also covers
   other packaged foods. 762 products (meat and fish, staples, oils, baby food,
