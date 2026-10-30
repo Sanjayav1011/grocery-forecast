@@ -93,6 +93,17 @@ FORECAST_ONLY_MAP = [
     ("baby care", "mothers & maternity", "*", "personal_care"),
 ]
 
+# Name corrections for products a sub-category rule files under the wrong
+# model category: (model category from the rules, name pattern, corrected
+# category). Clear cases only. They apply to UNTRACKED products only
+# (sampling_category empty), so the tracked set, its POS history and the
+# saved models do not change. "gourmet breads" -> sweets is right for the
+# croissants but not for Wingreens' baked flat bread and pita crisps, and a
+# cookie sits under "birthday & party cakes"; they are packaged snacks.
+NAME_CORRECTIONS = [
+    ("sweets", r"\bflat ?bread\b|\bpita\b|\bcrisps?\b|\bcookies?\b", "snacks"),
+]
+
 # Categories are sampled in the order they were introduced, so adding a
 # category never changes the products already picked for earlier ones.
 SAMPLING_ORDER = ["beverages", "dairy", "fruits", "household", "snacks", "sweets", "vegetables", "personal_care"]
@@ -154,15 +165,28 @@ def map_categories(catalog, rules):
     return model_category
 
 
+def name_corrections(catalog, corrections=NAME_CORRECTIONS):
+    """catalog["model_category"] with NAME_CORRECTIONS applied to untracked products (no sampling_category)."""
+    model_category = catalog["model_category"].copy()
+    untracked = catalog["sampling_category"].isna()
+    names = catalog["SKU Name"].fillna("")
+    for source, pattern, target in corrections:
+        mask = untracked & (model_category == source) & names.str.contains(pattern, case=False, regex=True)
+        model_category[mask] = target
+    return model_category
+
+
 def prepare_catalog():
     """
     Whole catalog with its model category (any rule), sampling_category
-    (sampling rules only), parsed MRP, brand popularity, pack size, and an
+    (sampling rules only; NAME_CORRECTIONS then fix untracked products'
+    model category by name), parsed MRP, brand popularity, pack size, and an
     `excluded_non_food` flag for mis-filed items.
     """
     catalog = load_catalog()
     catalog["model_category"] = map_categories(catalog, CATEGORY_MAP + FORECAST_ONLY_MAP)
     catalog["sampling_category"] = map_categories(catalog, CATEGORY_MAP)
+    catalog["model_category"] = name_corrections(catalog)
     catalog["mrp"] = catalog["MRP"].map(parse_mrp)
     catalog["brand"] = catalog["Brand"].fillna("").astype(str).str.strip()
     # brand popularity = how many products the brand has across the WHOLE catalog

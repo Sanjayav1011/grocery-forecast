@@ -546,6 +546,30 @@ smaller budget stays fair.
   stand in for "vegetables" and dry fruits for "fruits". "Snacks" also covers
   other packaged foods. 762 products (meat and fish, staples, oils, baby food,
   toys, sports, kitchen goods) fit no model category and are not forecast.
+- **Name corrections to the mapping.** The rules map whole BigBasket
+  sub-categories, so a few products land in the wrong model category.
+  `NAME_CORRECTIONS` in `src/sample_products.py` fixes the clear cases by name.
+  These apply to untracked products only, so the tracked set, its POS history
+  and the saved models stay as they are. Today they move 5 products from
+  "sweets" to "snacks": Wingreens baked multi-grain flat bread and pita crisps
+  (2 listings each, filed under "gourmet breads") and fresho! pinwheel cookies
+  (under "birthday & party cakes"). Their analog forecasts now come from
+  tracked snacks, not mithai (~15 instead of ~51 units a day in Bengaluru;
+  estimated). Other products barely change, through the median MRP that fills
+  missing prices (total forecast −0.005%).
+  Left as they are, because they are unclear or tracked:
+  - Britannia croissants, cup cakes and brownies stay in "sweets".
+  - Tracked "dairy" products that are really beverages or spreads stay in
+    "dairy", since moving them needs regenerated data and retrained models:
+    - Nescafe and Milo ready-to-drink drinks
+    - Oreo milkshake mix
+    - Cadbury drinking chocolate
+    - Soyvita powder
+    - Aavin fruit drink
+    - ORGANIC ORIGINS peanut butter
+    - Amul choco spread
+  - Tracked packaged mithai (e.g. Haldiram's soan papdi) stays in "sweets"
+    for the same reason.
 - **The Diwali check is in-sample.** Diwali-week forecasts (sweets ~3× a
   normal week, dairy ~2.2×) were checked on October 2025, which is inside the
   training period.
