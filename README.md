@@ -49,8 +49,9 @@ BigBasket catalog (data/archive_products.csv)
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
+| `src/explain_forecast.py` | Forecast explanations from LightGBM SHAP (`pred_contrib`): per-product drivers in units/day (`/api/explain`) and global importance charts |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -243,6 +244,87 @@ GET /api/product?city=<city>&sku_id=<sku>[&scope=regional|model]
 
 An unknown city or SKU returns a 404 JSON error. Adding `&festival=<name>`
 also returns the festival-planning calculation for that product.
+
+### Why this forecast? (admin)
+
+The product panel has a "Why this forecast?" section, and the admin page a
+"What drives demand" card. Both use LightGBM's own SHAP values
+(`Booster.predict(X, pred_contrib=True)`) on the saved production models, so
+there is no new dependency. The models, forecasts, risk rule and evaluation
+outputs are not changed. `src/explain_forecast.py` (a pipeline step after
+`serving_risk_report.py`, about 1 minute) scores the same feature rows the
+forecast uses (`forecast_regional.serving_features`), with `pred_contrib`.
+
+**Drivers.** Each of the 26 model features belongs to exactly one driver:
+
+| Driver | Features |
+|---|---|
+| Festival proximity | days until next / since last festival, next festival weight, festival week |
+| Day of week | day of week, weekend |
+| Recent sales | lags 7/14/21, rolling 7/14/28-day mean and 14-day std (all lagged 7 days) |
+| Same time last year | lag 364 |
+| Price | unit price, log MRP |
+| City | city code |
+| Product, brand & category | product, brand and category codes, pack size |
+| Season & other | month, week of year, month start/end, promotion (off in forecasts) |
+
+**From log space to units/day.** The models use a Tweedie objective with a
+log link. For each row, base value + the sum of the contributions equals
+the raw prediction, and the forecast is exp(raw prediction). So
+contributions *multiply* the forecast. To show them as units/day, each
+contribution is multiplied by the logarithmic mean of the baseline
+`b = exp(base value)` and the forecast `f`:
+
+```
+units_i = contribution_i × (f − b) / (ln f − ln b)      (= b when f = b)
+```
+
+With this scaling, baseline + all driver units = forecast exactly. Each
+driver keeps its sign, and each driver's share of `f − b` equals its share
+of the log gap. It is an approximation: a ×1.3 effect is worth more units
+on a large forecast than on a small one. The 7 forecast days
+(30 Oct–5 Nov) are converted day by day and then averaged. The baseline is
+the model's starting point, its average log forecast expressed in units
+(29.2/day for perishables, 22.8/day for non-perishables). Day-of-week
+effects largely cancel over a full 7-day window, so "Weekend" stays small in
+the 7-day view.
+
+**In the panel:**
+- **Bar chart:** the 6 largest drivers as horizontal bars from zero, blue
+  where a driver raises the forecast and orange where it lowers it (the same
+  validated pair as the forecast chart). Hovering a bar shows its value.
+- **Labels:** plain English, such as "Diwali in 10 days", "Recent sales
+  (~113/day over 4 weeks)" or "Price ₹140".
+- **Summary line:** baseline + drivers = forecast, plus a "Drivers table"
+  listing all 8 drivers.
+- **Analog products:** they have no model of their own. The panel says
+  "Borrowed from 5 similar products" and explains the top-weighted analog in
+  the same city.
+
+**Admin card:** for each model (perishable / non-perishable), the 10
+features with the largest mean |SHAP| on the evaluation test window
+(1 Apr–25 Aug 2026, 50,568 / 151,704 rows, simulated sales). Values are in
+log scale, with "~%" = exp(mean |SHAP|) − 1, the typical effect on a
+forecast. The top drivers are:
+- **Perishable:** the product's own identity code (what the model learned
+  about each item beyond price, brand and pack size), the recent 28-day
+  average, and days until the next festival.
+- **Non-perishable:** the recent 28-day average dominates.
+
+**Outputs:**
+- `data/serving_explanations.csv`: one row per tracked product × city.
+- `outputs/shap_importance.json`.
+- `outputs/shap_importance_perishable.png` and
+  `outputs/shap_importance_nonperishable.png`: the same charts as the card.
+
+```
+GET /api/explain?city=<city>&sku_id=<sku>
+    -> {city, sku_id, product_name, forecast_daily, source: direct|analog, analog,
+        explanation: {baseline, forecast, window, drivers (top 6), rest, all_drivers}, notes}
+GET /api/explain/importance -> {window, note, segments: {perishable|nonperishable: {rows, features (top 10)}}}
+```
+
+An unknown city or SKU returns a 404 JSON error.
 
 ### Next 7 days and festival planning (admin)
 

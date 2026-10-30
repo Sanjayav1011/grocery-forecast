@@ -83,13 +83,11 @@ def score_tracked(as_of=None):
     return pd.concat([forecast, recent], axis=1).reset_index(), as_of, daily
 
 
-def daily_forecasts(history, as_of):
+def serving_features(history, as_of):
     """
-    LightGBM forecast for each of the LEAD_TIME_DAYS after as_of (columns
-    sku_id, city, date, prediction) for every series in `history` (POS rows
-    for the HISTORY_DAYS up to as_of), and each series' mean demand over the
-    RECENT_DAYS up to as_of. Features are per series, so scoring one series
-    alone gives the same numbers as scoring the whole history.
+    The encoded feature rows for each of the LEAD_TIME_DAYS after as_of, per
+    series in `history`, and each series' mean demand over the RECENT_DAYS
+    up to as_of (what daily_forecasts scores; explain_forecast.py explains them).
     """
     # Future rows carry what is known in advance (product, price); sales and
     # stock are unknown and promotions are assumed off. Every lag feature is
@@ -103,7 +101,18 @@ def daily_forecasts(history, as_of):
     recent = (df[(df["date"] > as_of - pd.Timedelta(days=RECENT_DAYS)) & (df["date"] <= as_of)]
               .groupby(["sku_id", "city"])["demand"].mean().rename("recent_daily"))
     df = df[df["date"] > as_of].copy()
-    df = apply_categorical_mappings(df, json.loads(MAPPINGS_PATH.read_text()))
+    return apply_categorical_mappings(df, json.loads(MAPPINGS_PATH.read_text())), recent
+
+
+def daily_forecasts(history, as_of):
+    """
+    LightGBM forecast for each of the LEAD_TIME_DAYS after as_of (columns
+    sku_id, city, date, prediction) for every series in `history` (POS rows
+    for the HISTORY_DAYS up to as_of), and each series' mean demand over the
+    RECENT_DAYS up to as_of. Features are per series, so scoring one series
+    alone gives the same numbers as scoring the whole history.
+    """
+    df, recent = serving_features(history, as_of)
     df["prediction"] = np.nan
     for segment, is_perishable in [("perishable", 1), ("nonperishable", 0)]:
         rows = df["is_perishable"] == is_perishable

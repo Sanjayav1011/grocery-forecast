@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR, LEAD_TIME_DAYS
+import explain_forecast
 import festival_readiness
 import festival_uplift
 import product_detail
@@ -379,6 +380,7 @@ PAGE = """<!doctype html>
     .product-panel { position:fixed; z-index:6; top:0; right:0; width:min(860px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); visibility:hidden; transition:transform .2s ease, visibility .2s; } .product-panel.open { transform:translateX(0); visibility:visible; } .product-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; } .product-panel-head h2 { margin:0; font-size:16px; color:var(--text); } .product-panel-head button { border:0; background:transparent; font-size:22px; line-height:1; cursor:pointer; color:var(--muted); } .product-panel h3 { margin:18px 0 8px; font-size:12px; color:var(--text); } .product-panel .risk { color:var(--red); } .product-panel td { font-size:10px; padding:7px 10px; }
     .product-layout { display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:18px; margin-top:12px; } .chart-box { position:relative; } .chart-box svg { display:block; width:100%; height:auto; } .chart-legend { display:flex; flex-wrap:wrap; gap:4px 12px; margin-bottom:6px; color:var(--muted); font-size:10px; } .key { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:5px; vertical-align:middle; } .key.dotted { border-top-style:dotted; } .key.dashed { border-top-style:dashed; } .swatch { display:inline-block; width:10px; height:10px; margin-right:5px; border-radius:2px; opacity:.3; vertical-align:middle; } .chart-tooltip { position:absolute; top:40px; min-width:170px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--muted); font-size:10px; line-height:1.6; box-shadow:0 4px 12px rgba(20,60,35,.12); pointer-events:none; } .chart-tooltip strong { color:var(--text); font-size:11px; } .tip-date { color:var(--text); font-weight:600; } .product-facts { display:grid; grid-template-columns:auto 1fr; align-content:start; gap:7px 10px; margin:0; font-size:11px; } .product-facts dt { color:var(--muted); font-size:10px; } .product-facts dd { margin:0; color:var(--text); } .chart-table { margin-top:14px; font-size:11px; } .chart-table summary { color:var(--green); cursor:pointer; } .chart-table .table-wrap { max-height:300px; overflow:auto; margin-top:8px; }
     @media (max-width:700px) { .product-layout { grid-template-columns:1fr; } }
+    .explain { margin-top:14px; } .explain svg { display:block; width:100%; max-width:620px; height:auto; } .explain .swatch { opacity:1; } .explain-summary { color:var(--text); font-size:11px; margin:0 0 6px; } .drivers-chart { padding:8px 12px 4px; } .drivers-chart svg { display:block; width:100%; height:auto; }
     .datasets { margin-top:34px; } .dataset-toolbar { display:flex; align-items:center; gap:10px; margin:14px 0; } .dataset-toolbar select, .dataset-toolbar a { border:1px solid #b9d5be; border-radius:7px; background:#fff; color:var(--text); padding:8px 10px; font-size:11px; } .dataset-toolbar a { text-decoration:none; } .dataset-meta { color:var(--muted); font-size:11px; } .dataset-table { max-height:390px; overflow:auto; } .dataset-table table { min-width:720px; } .dataset-table th { position:sticky; top:0; } .dataset-page { display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); font-size:11px; } .dataset-page button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 10px; cursor:pointer; }
     .admin-only { display:none !important; } .page-nav { display:flex; align-items:center; gap:8px; } .page-nav a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:#28633d; padding:9px 12px; text-decoration:none; font-size:11px; } .page-nav a[aria-current="page"] { background:var(--green); border-color:var(--green); color:#fff; } .header-actions { display:flex; align-items:center; gap:10px; }
     body.admin-page .admin-only { display:block !important; } body.admin-page .summary { display:grid !important; } body.admin-page .filters { display:flex !important; } body.admin-page main > .table-wrap.admin-only { display:block !important; } body.admin-page .customer-only { display:none !important; }
@@ -486,6 +488,7 @@ PAGE = """<!doctype html>
     <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="demand-title">Highest demand — next 7 days</span> <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast (7 days)</th><th>Est. revenue (7 days)</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="plan-title">Festival planning</span> <span class="rank-toggle" id="plan-rank-toggle"></span></h3><div class="view-toolbar"><select id="plan-festival" aria-label="Festival"></select><span class="view-count" id="plan-uplifts"></span></div><div class="view-caption" id="plan-caption"></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>7-day forecast</th><th>Uplift (category)</th><th>Festival-week units</th><th>Est. revenue</th><th>Category</th></tr></thead><tbody id="plan-body"></tbody></table></div></div><div class="regional-panel stockout-view" style="margin-top:12px"><h3 id="ready-title">Festival readiness</h3><div class="view-tabs" id="ready-tabs"></div><div class="view-toolbar"><select id="ready-status" aria-label="Status"></select><select id="ready-category" aria-label="Category"></select><input id="ready-brand" list="ready-brand-list" placeholder="Brand / company" aria-label="Brand"><datalist id="ready-brand-list"></datalist><button type="button" id="ready-clear">Clear filters</button><a id="ready-download" href="#">Download CSV</a><span class="view-count" id="ready-count"></span></div><div class="view-caption" id="ready-caption"></div><div class="table-wrap"><table><thead id="ready-head"></thead><tbody id="ready-body"></tbody></table></div><div class="view-pager"><button type="button" id="ready-prev">Previous</button><span id="ready-page"></span><button type="button" id="ready-next">Next</button></div></div></section>
   <div class="summary admin-only" id="summary"></div>
     <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
+    <section class="model-risk admin-only" id="drivers-card"><div class="catalog-head"><h2>What drives demand <span id="drivers-scope" class="subhead"></span></h2></div><div class="regional-columns"><div class="regional-panel"><h3>Perishable (dairy, sweets)</h3><div class="drivers-chart" id="drivers-perishable"></div></div><div class="regional-panel"><h3>Non-perishable</h3><div class="drivers-chart" id="drivers-nonperishable"></div></div></div><p class="subhead" id="drivers-caption"></p></section>
     <div class="section-eyebrow customer-only">Picked for your kitchen</div><div class="catalog-head customer-only"><h2>Shop groceries <span id="catalog-count" class="subhead"></span></h2><div class="subhead">Fresh picks for every day</div></div>
   <div class="catalog customer-only" id="catalog"></div>
     <div class="storefront-pagination customer-only"><button id="customer-prev" type="button">Previous</button><span id="customer-page-label"></span><button id="customer-next" type="button">Next</button></div>
@@ -1037,7 +1040,7 @@ function renderProductPanel(product) {
   document.getElementById('product-panel-body').innerHTML = `<div class="subhead">${escapeHtml(product.city)} · ${escapeHtml(product.sku_id)} · ${product.scope === 'model' ? 'model risk report' : 'regional report'} · today ${escapeHtml(shortDate(product.today))}</div>
     <div class="product-layout"><div><div class="chart-legend">${legend}</div><div class="chart-box">${chart.svg}<div class="chart-tooltip" hidden></div></div></div>
     <dl class="product-facts">${facts.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join('')}</dl></div>
-    ${festivalNote(product)}${analogs}${table}<p class="subhead">${product.notes.map(escapeHtml).join(' ')}</p>`;
+    ${festivalNote(product)}<div class="explain" id="product-explain"><h3>Why this forecast?</h3><p class="subhead">Loading…</p></div>${analogs}${table}<p class="subhead">${product.notes.map(escapeHtml).join(' ')}</p>`;
   attachChartHover(document.querySelector('#product-panel-body .chart-box'), chart, product);
 }
 function festivalNote(product) {
@@ -1045,6 +1048,70 @@ function festivalNote(product) {
   if (!plan) return '';
   const fmtNumber = (value, digits = 0) => Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
   return `<div class="occasion" style="margin-top:14px"><strong>Festival planning: ${escapeHtml(plan.festival)} (${shortDate(plan.date)})</strong><br>7-day forecast ${fmtNumber(plan.seven_day_units, 1)} units × ${escapeHtml(plan.category)} uplift ×${plan.uplift.toFixed(2)} = <strong>${fmtNumber(plan.festival_week_units)} units</strong> in the festival week.<br><span class="subhead">Uplift: ${escapeHtml(product.city)} ${escapeHtml(plan.category)} demand in the week ending on ${escapeHtml(plan.festival)} vs the 4 normal weeks before it, averaged over ${plan.occurrences} past years (${plan.first_year}–${plan.last_year}, simulated sales history). Planning estimate, not a model forecast (the model forecasts 7 days ahead).</span></div>`;
+}
+const DRIVER_COLORS = {up: '#2a78d6', down: '#eb6834', bar: '#1f8f4d'};
+function signedUnits(value) {
+  const size = Math.abs(value);
+  return `${value < 0 ? '−' : '+'}${size.toLocaleString('en-IN', {maximumFractionDigits: size < 10 ? 1 : 0})}`;
+}
+function driverBars(rows, options) {
+  // horizontal bars from a zero line; rows: [{label, value, title}]
+  const W = options.W || 540, rowH = 26, labelW = options.labelW || 230, valueW = options.valueW || 64, top = 6;
+  const H = top + rows.length * rowH + 6;
+  const diverging = rows.some(row => row.value < 0);
+  const max = Math.max(1e-9, ...rows.map(row => Math.abs(row.value)));
+  const plotW = W - labelW - valueW;
+  const zero = diverging ? labelW + plotW / 2 : labelW;
+  const scale = (diverging ? plotW / 2 : plotW) / max;
+  const parts = [`<line x1="${zero}" x2="${zero}" y1="${top}" y2="${H - 6}" stroke="${CHART_COLORS.grid}" stroke-width="1"/>`];
+  rows.forEach((row, i) => {
+    const y = top + i * rowH, w = Math.max(1, Math.abs(row.value) * scale);
+    const x = row.value < 0 ? zero - w : zero;
+    const color = options.color || (row.value < 0 ? DRIVER_COLORS.down : DRIVER_COLORS.up);
+    const valueX = row.value < 0 ? x - 4 : x + w + 4;
+    parts.push(`<g><title>${escapeHtml(row.title || '')}</title><rect x="0" y="${y}" width="${W}" height="${rowH}" fill="transparent"/>`);
+    parts.push(`<text x="${labelW - 8}" y="${y + rowH / 2 + 3}" text-anchor="end" font-size="10" fill="${CHART_COLORS.text}">${escapeHtml(row.label)}</text>`);
+    parts.push(`<rect x="${x}" y="${y + 6}" width="${w}" height="${rowH - 12}" rx="3" fill="${color}"/>`);
+    parts.push(`<text x="${valueX}" y="${y + rowH / 2 + 3}" text-anchor="${row.value < 0 ? 'end' : 'start'}" font-size="10" fill="${CHART_COLORS.text}">${escapeHtml(row.text)}</text></g>`);
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(options.aria)}">${parts.join('')}</svg>`;
+}
+function renderExplanation(payload) {
+  const box = document.getElementById('product-explain');
+  if (!box) return;
+  const e = payload.explanation;
+  const fmt = value => Number(value).toLocaleString('en-IN', {maximumFractionDigits: 1});
+  const rows = e.drivers.map(d => ({label: d.label, value: d.units, text: `${signedUnits(d.units)}/day`,
+    title: `${d.label}: ${signedUnits(d.units)} units/day (approximate, from SHAP in log space)`}));
+  const rest = e.rest.count ? ` + ${e.rest.count} smaller driver${e.rest.count === 1 ? '' : 's'} (${signedUnits(e.rest.units)})` : '';
+  const analog = payload.analog ? `<p class="explain-summary"><strong>Borrowed from ${payload.analog.count} similar products.</strong> This product has no sales history; its forecast (${fmt(payload.forecast_daily)} units/day, estimated) is a weighted, price-adjusted average of ${payload.analog.count} tracked products. Below: why the model forecasts the top-weighted one, ${productLink(payload.analog.product_name, payload.analog.sku_id, payload.city, 'regional')} (weight ${(payload.analog.weight * 100).toFixed(0)}%, price factor ×${payload.analog.price_adjustment.toFixed(2)}).</p>` : '';
+  const table = `<details class="chart-table"><summary>Drivers table</summary><div class="table-wrap"><table><thead><tr><th>Driver</th><th>Units/day</th></tr></thead><tbody><tr><td>Baseline</td><td>${fmt(e.baseline)}</td></tr>${e.all_drivers.map(d => `<tr><td>${escapeHtml(d.label)}</td><td>${signedUnits(d.units)}</td></tr>`).join('')}<tr><td><strong>Forecast</strong></td><td><strong>${fmt(e.forecast)}</strong></td></tr></tbody></table></div></details>`;
+  box.innerHTML = `<h3>Why this forecast?</h3>${analog}<p class="explain-summary">Baseline <strong>${fmt(e.baseline)}</strong> units/day ${e.drivers.map(d => signedUnits(d.units)).join(' ')}${rest} = forecast <strong>${fmt(e.forecast)}</strong> units/day (average of ${escapeHtml(shortDate(e.window.start))}–${escapeHtml(shortDate(e.window.end))})</p>
+    <div class="chart-legend">${legendItem('Raises the forecast', DRIVER_COLORS.up, 'area')}${legendItem('Lowers the forecast', DRIVER_COLORS.down, 'area')}</div>
+    ${driverBars(rows, {aria: `Top ${rows.length} drivers of the forecast for ${e.sku_id} in ${e.city}`})}${table}
+    <p class="subhead">${payload.notes.map(escapeHtml).join(' ')} Baseline = the model's starting point (its average log forecast, as units). Day-of-week effects largely cancel over a full 7-day window.</p>`;
+}
+async function loadExplanation(sku, city) {
+  const response = await fetch(`/api/explain?${new URLSearchParams({sku_id: sku, city})}`);
+  const payload = await response.json();
+  if (!openProduct || openProduct.sku !== sku) return;  // another product was opened meanwhile
+  const box = document.getElementById('product-explain');
+  if (!box) return;
+  if (!response.ok) { box.innerHTML = `<h3>Why this forecast?</h3><p class="subhead">${escapeHtml(payload.error || 'No explanation available')}</p>`; return; }
+  renderExplanation(payload);
+}
+async function renderDriversCard() {
+  const response = await fetch('/api/explain/importance');
+  const payload = await response.json();
+  if (!response.ok) { document.getElementById('drivers-caption').textContent = payload.error || 'Driver importance unavailable'; return; }
+  Object.entries(payload.segments).forEach(([segment, block]) => {
+    const rows = block.features.map(f => ({label: f.label, value: f.mean_abs_shap, text: `${f.mean_abs_shap.toFixed(3)} · ~${f.typical_effect_pct.toFixed(0)}%`,
+      title: `${f.label} (${f.feature}): mean |SHAP| ${f.mean_abs_shap.toFixed(3)} on the log scale, a typical ~${f.typical_effect_pct.toFixed(0)}% effect on the forecast`}));
+    const box = document.getElementById(`drivers-${segment}`);
+    if (box) box.innerHTML = driverBars(rows, {W: 400, labelW: 140, valueW: 84, color: DRIVER_COLORS.bar, aria: `Top ${rows.length} demand drivers, ${segment} model`});
+  });
+  document.getElementById('drivers-scope').textContent = `· global importance, top 10 features per model`;
+  document.getElementById('drivers-caption').textContent = `Mean |SHAP| per feature on the evaluation test window (${shortDate(payload.window[0])}–${shortDate(payload.window[1])} ${payload.window[1].slice(0, 4)}, simulated sales history), in the model's log scale; ~% = the typical effect on a forecast. "Product" is the product's own identity code: what the model learned about each item beyond price, brand and pack size.`;
 }
 async function openProductPanel(sku, city, scope, opener, festival = '') {
   const panel = document.getElementById('product-panel');
@@ -1060,6 +1127,7 @@ async function openProductPanel(sku, city, scope, opener, festival = '') {
   const payload = await response.json();
   if (!response.ok) { document.getElementById('product-panel-title').textContent = payload.error || 'Unable to load product'; return; }
   renderProductPanel(payload);
+  loadExplanation(payload.sku_id, payload.city).catch(error => console.error(error));
 }
 function closeProductPanel() {
   const panel = document.getElementById('product-panel');
@@ -1198,6 +1266,7 @@ async function load() {
   if (openProduct) openProductPanel(openProduct.sku, openProduct.city, openProduct.scope, null, openProduct.festival).catch(error => showToast(error.message, true));
   document.getElementById('plan-festival').addEventListener('change', event => { planFestival = event.target.value; readinessState.page = '0'; saveUrlState(); renderFestivalPlanning().catch(error => console.error(error)); renderReadiness().catch(error => console.error(error)); });
   attachReadinessControls();
+  renderDriversCard().catch(error => console.error(error));
   await loadDashboard(selectedRegion);
   regionalData = await (await fetch('/api/regional-intelligence')).json();
   renderRegional();
@@ -1430,6 +1499,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})
+                return
+            except FileNotFoundError as error:
+                self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
+                return
+            self.send_json(200, payload)
+            return
+        if path in {"/api/explain", "/api/explain/importance"}:
+            params = {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()}
+            try:
+                payload = (explain_forecast.importance_payload() if path == "/api/explain/importance"
+                           else explain_forecast.explain(params.get("city", ""), params.get("sku_id", "")))
+            except explain_forecast.ExplanationNotFound:
+                self.send_json_not_found("No explanation for this product", params.get("sku_id", ""))
                 return
             except FileNotFoundError as error:
                 self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
