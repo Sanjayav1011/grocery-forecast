@@ -40,8 +40,9 @@ BigBasket catalog (data/archive_products.csv)
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
 | `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
+| `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -82,6 +83,63 @@ Dashboard pages:
   generated dataset.
 
 The dashboard has no authentication. Run it only on a trusted machine.
+
+### Stockout views (admin)
+
+Both stockout tables on `/admin` are "stocks out first" views: the model
+risk report ("Stockout risk: reorder before stock runs out", the 344 tracked
+products) and the regional "Stockout risk and recommended restock" (the whole
+forecast catalog). Each row is one product in the selected city. Products
+listed under several SKUs appear once (`unique_products()`).
+
+- **Columns:** MRP; units sold in the last 7 and 28 days; average daily
+  sales over 28 days; trend (last 28 days vs the 28 before, ▲/▼); days until
+  stockout (= days of cover); next delivery; reorder qty; forecast source.
+  Sales history covers the days before stock is counted: the latest
+  test-window day for the model report, the first forecast day for the
+  regional one. Analog catalog products have no history, so they show
+  their forecast daily demand labelled "forecast (no history)" and no
+  sales or trend.
+- **Default order:** lowest days until stockout first, then the highest
+  daily rate (sales, or the forecast without history). Cover, units sold,
+  average daily sales, MRP, reorder qty and trend headers sort on click.
+- **Filters (all combine):** brand (searchable, with product counts),
+  category, MRP band (<₹50, ₹50–200, ₹200–500, >₹500) or custom min/max,
+  top 10% / 25% sellers by units sold in 28 days (within the city), rising
+  / falling trend, days until stockout ≤2 / ≤4 / ≤7, direct / analog,
+  product-name search. "Clear filters" resets them. The count reads "N of M
+  products".
+- **By brand** tab: units sold (28d), revenue (units × MRP), products, at
+  stockout risk, reorder units and average cover per brand, sorted by units
+  sold. Clicking a brand filters the table to it. Products without history
+  count as 28 × forecast daily and are marked `*`.
+- **Download CSV** exports every filtered row in the current sort order.
+- Filter state lives in the URL (`m_…` for the model report, `r_…` for the
+  regional view, plus `city` and `rank`), so a view can be bookmarked.
+  Switching city keeps the filters.
+- "Highest demand for the upcoming occasion" can rank by units or by
+  estimated revenue (forecast units × MRP, with the same occasion
+  weighting); products without an MRP can't rank by revenue.
+
+The model report's table holds every tracked product, not only the stockout
+rows: `train_model.build_risk_report` is re-run on
+`outputs/test_predictions.csv` for the latest day, so cover, status and
+reorder qty match `outputs/stockout_risk_report.csv` exactly. All sales,
+stock, cover, delivery and reorder figures come from synthetic or
+simulated data, and the views say so.
+
+The API is server-side and reads a merged table kept in memory (built in
+the background at startup):
+
+```
+GET /api/stockout?scope=model|regional&city=<city or all>&brand=&category=&min_price=&max_price=
+                 &top=10|25&trend=rising|falling&max_cover=&source=direct|analog&q=
+                 &sort=cover|units_28d|avg_daily_sales|price|reorder_qty|trend&order=asc|desc
+                 &limit=50&offset=0[&format=csv]          -> {total, rows, products_in_city, planning_day}
+GET /api/stockout/brands?scope=&city=&<same filters>      -> {total, rows, categories}
+```
+
+An unknown city returns a 404 JSON error, and bad parameters return 400.
 
 ## Email alerts
 

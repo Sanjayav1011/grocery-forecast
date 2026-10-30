@@ -3,6 +3,7 @@ import io
 import json
 import re
 import sys
+import threading
 import zipfile
 from datetime import date
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -12,6 +13,8 @@ from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR
+import stockout_view
+from stockout_view import product_key, unique_products  # noqa: F401  (product_key kept for callers)
 CATALOG_CACHE = None
 STOREFRONT_CATALOG_CACHE = None
 REGIONAL_INTELLIGENCE_CACHE = None
@@ -60,23 +63,6 @@ def next_festival(occasions):
     return min(upcoming, key=lambda row: row["date"]) if upcoming else None
 
 
-def product_key(row):
-    """Normalised product name + pack size: the catalog lists some products under several SKUs."""
-    name = " ".join(re.sub(r"[^0-9a-z]+", " ", row.get("product_name", "").casefold()).split())
-    return name, row.get("pack_size_value", ""), row.get("pack_size_unit", "")
-
-
-def unique_products(rows):
-    """One row per product_key: the directly forecast SKU if there is one, else the first (lowest) SKU id."""
-    best = {}
-    for row in rows:
-        rank = (row["forecast_source"] != "lightgbm_direct", row["sku_id"])
-        key = product_key(row)
-        if key not in best or rank < best[key][0]:
-            best[key] = (rank, row)
-    return [row for _, row in best.values()]
-
-
 def not_forecast_count():
     path = DATA_DIR / NOT_FORECAST_FILE
     return len(read_csv_from_path(path)) if path.exists() else None
@@ -112,7 +98,13 @@ def regional_intelligence():
         for row in region_rows:
             product_text = " ".join([row.get("category", ""), row.get("subcategory", ""), row.get("product_name", "")]).lower()
             row["occasion_demand_score"] = float(row["forecast_units"]) * (2.5 if any(category in product_text for category in focus_categories) else 0.5)
-        demand = sorted(unique_products(region_rows), key=lambda row: row["occasion_demand_score"], reverse=True)[:10]
+            price = float(row["price"]) if row.get("price") else None
+            row["revenue_estimate"] = round(float(row["forecast_units"]) * price, 2) if price else None
+        products = unique_products(region_rows)
+        demand = sorted(products, key=lambda row: row["occasion_demand_score"], reverse=True)[:10]
+        # revenue = forecast units x MRP, with the same occasion focus weighting; products without an MRP can't rank
+        demand_by_revenue = sorted((row for row in products if row["revenue_estimate"] is not None),
+                                   key=lambda row: row["occasion_demand_score"] * float(row["price"]), reverse=True)[:10]
         for row in stockout:
             row["recommended_restock_units"] = int(row["reorder_qty"])  # shared rule, inventory.classify_risk
         result.append({
@@ -128,6 +120,7 @@ def regional_intelligence():
             "stockout": stockout,
             "overstock": overstock,
             "demand": demand,
+            "demand_by_revenue": demand_by_revenue,
             "not_forecast_count": excluded,
             "not_forecast_download": f"/download/{quote(NOT_FORECAST_FILE)}",
         })
@@ -346,6 +339,7 @@ PAGE = """<!doctype html>
     .store-actions { display:flex; align-items:center; gap:8px; } .basket-button { border:0; border-radius:6px; background:var(--green); color:#fff; padding:10px 14px; cursor:pointer; font-size:11px; } .basket-count { display:inline-block; min-width:18px; padding:2px 5px; border-radius:10px; background:#fff; color:var(--green); margin-left:4px; }
     .basket-panel { position:fixed; z-index:5; top:0; right:0; width:min(380px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); transition:transform .2s ease; } .basket-panel.open { transform:translateX(0); } .basket-head { display:flex; justify-content:space-between; align-items:center; } .basket-head button, .payment button.close { border:0; background:transparent; font-size:20px; cursor:pointer; color:var(--muted); } .basket-item { display:grid; grid-template-columns:1fr auto; gap:8px; border-bottom:1px solid var(--line); padding:12px 0; font-size:11px; } .basket-item button { border:1px solid #b9d5be; background:#fff; border-radius:4px; cursor:pointer; } .basket-total { display:flex; justify-content:space-between; margin:18px 0; font-weight:700; } .checkout { width:100%; border:0; border-radius:6px; padding:11px; background:var(--green); color:#fff; cursor:pointer; } .payment { display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); } .payment.open { display:block; } .payment label { display:block; color:var(--muted); font-size:10px; margin:10px 0 4px; } .payment input { width:100%; border:1px solid #b9d5be; border-radius:5px; padding:9px; }
     .regional-intelligence, .model-risk { margin:0 0 30px; } .region-tabs { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; } .region-tab { border:1px solid #b9d5be; border-radius:18px; padding:8px 14px; background:#fff; color:#28633d; cursor:pointer; font-size:11px; } .region-tab.active { background:var(--green); color:#fff; } .region-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:12px; } .region-metric { border:1px solid var(--line); border-radius:7px; background:#fff; padding:12px; } .region-metric span { display:block; color:var(--muted); font-size:10px; margin-bottom:5px; } .region-metric strong { font-size:16px; color:var(--text); } .region-metric.alert strong { color:var(--red); } .region-metric.warn strong { color:var(--amber); } .occasion { border:1px solid #cfe5d2; border-radius:7px; background:#eff9f0; padding:12px; margin-bottom:12px; color:#28633d; font-size:12px; } .regional-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .regional-panel { border:1px solid var(--line); border-radius:7px; background:#fff; overflow:hidden; } .regional-panel h3 { margin:0; padding:11px 12px; font-size:12px; color:var(--text); background:#f0f6f0; } .regional-panel table { min-width:0; } .regional-panel td, .regional-panel th { padding:8px 10px; } .regional-panel td { font-size:10px; } .regional-panel .risk { color:var(--red); } .regional-panel .safe { color:var(--green); }
+    .stockout-view .view-tabs { display:flex; gap:6px; padding:10px 12px 0; } .stockout-view .filter { padding:6px 11px; font-size:10px; } .view-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px 12px; } .view-toolbar input, .view-toolbar select, .view-toolbar button, .view-toolbar a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 8px; font-size:10px; text-decoration:none; cursor:pointer; } .view-toolbar input[type=number] { width:68px; } .view-toolbar [data-key=brand], .view-toolbar [data-key=q] { width:150px; } .view-count { margin-left:auto; color:var(--muted); font-size:10px; } .view-caption { padding:0 12px 8px; color:var(--muted); font-size:10px; line-height:1.4; } .stockout-view .table-wrap { overflow:auto; max-height:560px; border-width:1px 0; border-radius:0; } .stockout-view th { position:sticky; top:0; z-index:1; } .stockout-view table { min-width:940px; } th.sortable { cursor:pointer; white-space:nowrap; } th.sortable:hover { color:var(--green); } tr.brand-row { cursor:pointer; } .view-pager { display:flex; align-items:center; gap:10px; padding:8px 12px; color:var(--muted); font-size:10px; } .view-pager button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:5px 9px; cursor:pointer; font-size:10px; } .view-pager button:disabled { opacity:.5; cursor:default; } .rank-toggle { float:right; color:var(--muted); font-weight:400; font-size:10px; } .rank-toggle .filter { padding:3px 9px; font-size:10px; margin-left:4px; }
     .datasets { margin-top:34px; } .dataset-toolbar { display:flex; align-items:center; gap:10px; margin:14px 0; } .dataset-toolbar select, .dataset-toolbar a { border:1px solid #b9d5be; border-radius:7px; background:#fff; color:var(--text); padding:8px 10px; font-size:11px; } .dataset-toolbar a { text-decoration:none; } .dataset-meta { color:var(--muted); font-size:11px; } .dataset-table { max-height:390px; overflow:auto; } .dataset-table table { min-width:720px; } .dataset-table th { position:sticky; top:0; } .dataset-page { display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); font-size:11px; } .dataset-page button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 10px; cursor:pointer; }
     .admin-only { display:none !important; } .page-nav { display:flex; align-items:center; gap:8px; } .page-nav a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:#28633d; padding:9px 12px; text-decoration:none; font-size:11px; } .page-nav a[aria-current="page"] { background:var(--green); border-color:var(--green); color:#fff; } .header-actions { display:flex; align-items:center; gap:10px; }
     body.admin-page .admin-only { display:block !important; } body.admin-page .summary { display:grid !important; } body.admin-page .filters { display:flex !important; } body.admin-page main > .table-wrap.admin-only { display:block !important; } body.admin-page .customer-only { display:none !important; }
@@ -450,9 +444,9 @@ PAGE = """<!doctype html>
     <nav class="category-menu customer-only" id="category-menu" aria-label="Shop by category"></nav>
     <section class="hero-banner customer-only"><div class="hero-copy"><div class="hero-kicker">Good food, right on time</div><h2>Freshness for every day</h2><p>Find your everyday favourites, handpicked fresh and delivered straight to your door.</p><a class="hero-cta" href="#catalog">Shop groceries <span>→</span></a></div><div class="hero-art"><img id="hero-product-image" alt="Featured product from our catalog"></div></section>
     <section class="service-strip customer-only" aria-label="Shopping benefits"><div class="service-item"><span class="service-icon">🌿</span><div><strong>Freshly picked</strong><span>Quality essentials for your home</span></div></div><div class="service-item"><span class="service-icon">🚚</span><div><strong>Convenient delivery</strong><span>Choose what works for you</span></div></div><div class="service-item"><span class="service-icon">🛍️</span><div><strong>Everyday favourites</strong><span>All your grocery needs in one place</span></div></div></section>
-    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-columns"><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Restock</th><th>Forecast source</th></tr></thead><tbody id="regional-stockout"></tbody></table></div></div><div class="regional-panel"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3>Highest demand for the upcoming occasion</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div></section>
+    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3>Highest demand for the upcoming occasion <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast</th><th>Est. revenue/day</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div></section>
   <div class="summary admin-only" id="summary"></div>
-    <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-columns"><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Next delivery</th><th>Reorder</th></tr></thead><tbody id="model-stockout"></tbody></table></div></div><div class="regional-panel"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
+    <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
     <div class="section-eyebrow customer-only">Picked for your kitchen</div><div class="catalog-head customer-only"><h2>Shop groceries <span id="catalog-count" class="subhead"></span></h2><div class="subhead">Fresh picks for every day</div></div>
   <div class="catalog customer-only" id="catalog"></div>
     <div class="storefront-pagination customer-only"><button id="customer-prev" type="button">Previous</button><span id="customer-page-label"></span><button id="customer-next" type="button">Next</button></div>
@@ -655,7 +649,159 @@ function renderCategories() {
     document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' });
   }));
 }
-function renderRegional() { const region = regionalData.find(item => item.region === selectedRegion) || regionalData[0]; if (!region) return; selectedRegion = region.region; document.getElementById('region-tabs').innerHTML = regionalData.map(item => `<button class="region-tab ${item.region === selectedRegion ? 'active' : ''}" data-region="${item.region}">${item.region}</button>`).join(''); document.querySelectorAll('.region-tab').forEach(button => button.addEventListener('click', () => { selectedRegion = button.dataset.region; renderRegional(); loadDashboard(selectedRegion).catch(error => console.error(error)); })); document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Planning window</span><strong>${region.days_until_occasion} days</strong></div>`; document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`; document.getElementById('occasion').textContent = `Upcoming occasion: ${region.occasion} on ${region.occasion_date}. Demand focus: ${region.demand_focus} (${region.focus_categories.join(', ')}).`; document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`; document.getElementById('regional-stockout').innerHTML = region.stockout.map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td class="risk">${money(row.days_of_cover)} days</td><td>${row.recommended_restock_units} units</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); document.getElementById('regional-demand').innerHTML = region.demand.map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td>${row.forecast_units} units</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); }
+function renderRegional() { const region = regionalData.find(item => item.region === selectedRegion) || regionalData[0]; if (!region) return; selectedRegion = region.region; document.getElementById('region-tabs').innerHTML = regionalData.map(item => `<button class="region-tab ${item.region === selectedRegion ? 'active' : ''}" data-region="${item.region}">${item.region}</button>`).join(''); document.querySelectorAll('.region-tab').forEach(button => button.addEventListener('click', () => { selectedRegion = button.dataset.region; renderRegional(); refreshStockoutViews(); loadDashboard(selectedRegion).catch(error => console.error(error)); })); document.getElementById('rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${rankBy === key ? 'active' : ''}" data-rank="${key}">${label}</button>`).join('')}`; document.querySelectorAll('[data-rank]').forEach(button => button.addEventListener('click', () => { rankBy = button.dataset.rank; saveUrlState(); renderRegional(); })); document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Planning window</span><strong>${region.days_until_occasion} days</strong></div>`; document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`; document.getElementById('occasion').textContent = `Upcoming occasion: ${region.occasion} on ${region.occasion_date}. Demand focus: ${region.demand_focus} (${region.focus_categories.join(', ')}).`; document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`; document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td>${row.forecast_units} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); }
+const STOCKOUT_KEYS = ['view', 'brand', 'category', 'min_price', 'max_price', 'top', 'trend', 'max_cover', 'source', 'q', 'sort', 'order', 'page'];
+const PRICE_BANDS = {lt50: ['', '49.99'], '50-200': ['50', '200'], '200-500': ['200.01', '500'], gt500: ['500.01', '']};
+const STOCKOUT_PAGE_SIZE = 50;
+const stockoutViews = [];
+let rankBy = 'units';
+function saveUrlState() {
+  const params = new URLSearchParams();
+  if (selectedRegion) params.set('city', selectedRegion);
+  if (rankBy !== 'units') params.set('rank', rankBy);
+  stockoutViews.forEach(view => Object.entries(view.state).forEach(([key, value]) => {
+    if (value && !(key === 'page' && value === '0') && !(key === 'view' && value === 'table')) params.set(`${view.prefix}_${key}`, value);
+  }));
+  const query = params.toString();
+  history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}`);
+}
+function readUrlState() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('city')) selectedRegion = params.get('city');
+  if (params.get('rank') === 'revenue') rankBy = 'revenue';
+  return params;
+}
+const fmt = (value, digits = 0) => value == null ? '–' : Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+function trendCell(value) {
+  if (value == null) return '–';
+  return `<span class="${value >= 0 ? 'safe' : 'risk'}">${value >= 0 ? '▲' : '▼'} ${Math.abs(value).toFixed(1)}%</span>`;
+}
+function stockoutRowHtml(row) {
+  const daily = row.has_history ? fmt(row.avg_daily_sales, 1) : `${fmt(row.forecast_daily, 1)} <span class="subhead">forecast (no history)</span>`;
+  const stockout = row.risk_status === 'stockout';
+  return `<tr><td>${escapeHtml(row.product_name)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.category)}</td><td>${row.price == null ? '–' : `₹${fmt(row.price, 2)}`}</td><td>${fmt(row.units_7d)}</td><td>${fmt(row.units_28d)}</td><td>${daily}</td><td>${trendCell(row.trend_pct)}</td><td class="${stockout ? 'risk' : ''}">${fmt(row.days_of_cover, 1)} days${stockout ? ' · stockout' : ''}</td><td>${fmt(row.days_until_delivery)} days</td><td>${fmt(row.reorder_qty)} units</td><td>${row.forecast_source === 'lightgbm_direct' ? 'direct' : 'analog'}</td></tr>`;
+}
+const STOCKOUT_COLUMNS = [['Product'], ['Brand'], ['Category'], ['MRP', 'price'], ['Sold 7d'], ['Sold 28d', 'units_28d'], ['Avg daily sales (28d)', 'avg_daily_sales'], ['Trend', 'trend'], ['Days until stockout', 'cover'], ['Next delivery'], ['Reorder qty', 'reorder_qty'], ['Source']];
+const BRAND_COLUMNS = ['Brand', 'Units sold 28d', 'Revenue 28d (est.)', 'Products', 'At stockout risk', 'Reorder units', 'Avg cover'];
+function createStockoutView(prefix, scope, containerId, caption) {
+  const params = new URLSearchParams(location.search);
+  const view = {prefix, scope, state: {}, request: 0};
+  STOCKOUT_KEYS.forEach(key => { view.state[key] = params.get(`${prefix}_${key}`) || ''; });
+  view.state.view = view.state.view || 'table';
+  view.state.page = view.state.page || '0';
+  const el = document.getElementById(containerId);
+  const option = (value, label) => `<option value="${value}">${label}</option>`;
+  el.innerHTML = `<div class="view-tabs"><button type="button" class="filter" data-tab="table">Stocks out first</button><button type="button" class="filter" data-tab="brands">By brand</button></div>
+    <div class="view-toolbar">
+      <input data-key="brand" list="${prefix}-brand-list" placeholder="Brand / company" aria-label="Brand"><datalist id="${prefix}-brand-list"></datalist>
+      <select data-key="category" aria-label="Category"><option value="">All categories</option></select>
+      <select data-band aria-label="Price band">${option('', 'Any price')}${option('lt50', '&lt;₹50')}${option('50-200', '₹50–200')}${option('200-500', '₹200–500')}${option('gt500', '&gt;₹500')}${option('custom', 'Custom')}</select>
+      <input data-key="min_price" type="number" min="0" placeholder="Min ₹" aria-label="Minimum price"><input data-key="max_price" type="number" min="0" placeholder="Max ₹" aria-label="Maximum price">
+      <select data-key="top" aria-label="Sales volume">${option('', 'All sellers')}${option('10', 'Top 10% sellers')}${option('25', 'Top 25% sellers')}</select>
+      <select data-key="trend" aria-label="Trend">${option('', 'Any trend')}${option('rising', 'Rising')}${option('falling', 'Falling')}</select>
+      <select data-key="max_cover" aria-label="Days until stockout">${option('', 'Any cover')}${option('2', '≤2 days')}${option('4', '≤4 days')}${option('7', '≤7 days')}</select>
+      <select data-key="source" aria-label="Forecast source">${option('', 'Any source')}${option('direct', 'Direct')}${option('analog', 'Analog')}</select>
+      <input data-key="q" type="search" placeholder="Search product name" aria-label="Search product name">
+      <button type="button" data-clear>Clear filters</button><a data-download href="#">Download CSV</a><span class="view-count" data-count></span>
+    </div><div class="view-caption">${caption.replace('{day}', '…')}</div><div class="table-wrap"><table><thead data-head></thead><tbody data-body></tbody></table></div>
+    <div class="view-pager"><button type="button" data-prev>Previous</button><span data-page-label></span><button type="button" data-next>Next</button></div>`;
+  const query = (extra = {}) => {
+    const out = new URLSearchParams({scope, city: selectedRegion || 'all'});
+    STOCKOUT_KEYS.filter(key => !['view', 'page'].includes(key)).forEach(key => { if (view.state[key]) out.set(key, view.state[key]); });
+    Object.entries(extra).forEach(([key, value]) => out.set(key, value));
+    return out;
+  };
+  const set = (changes) => { Object.assign(view.state, changes); if (!('page' in changes)) view.state.page = '0'; view.refresh(); };
+  let typingTimer;
+  el.querySelectorAll('[data-key]').forEach(input => {
+    const key = input.dataset.key;
+    const typed = ['q', 'min_price', 'max_price'].includes(key);
+    input.addEventListener(typed ? 'input' : 'change', () => {
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => set({[key]: input.value.trim()}), typed ? 300 : 0);
+    });
+  });
+  el.querySelector('[data-band]').addEventListener('change', event => {
+    const band = PRICE_BANDS[event.target.value];
+    if (band) set({min_price: band[0], max_price: band[1]});
+    else if (!event.target.value) set({min_price: '', max_price: ''});
+  });
+  el.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => set({view: button.dataset.tab})));
+  el.querySelector('[data-clear]').addEventListener('click', () => {
+    const cleared = {};
+    STOCKOUT_KEYS.filter(key => key !== 'view').forEach(key => { cleared[key] = ''; });
+    set(cleared);
+  });
+  el.querySelector('[data-prev]').addEventListener('click', () => set({page: String(Math.max(0, Number(view.state.page) - 1))}));
+  el.querySelector('[data-next]').addEventListener('click', () => set({page: String(Number(view.state.page) + 1)}));
+  el.querySelector('[data-head]').addEventListener('click', event => {
+    const sortKey = event.target.closest('[data-sort]')?.dataset.sort;
+    if (!sortKey) return;
+    const defaultOrder = ['cover', 'price'].includes(sortKey) ? 'asc' : 'desc';
+    const current = view.state.sort === sortKey ? (view.state.order || defaultOrder) : '';
+    set({sort: sortKey, order: current ? (current === 'asc' ? 'desc' : 'asc') : defaultOrder});
+  });
+  el.querySelector('[data-body]').addEventListener('click', event => {
+    const brand = event.target.closest('[data-brand]')?.dataset.brand;
+    if (brand != null) set({brand, view: 'table'});
+  });
+  view.syncControls = () => {
+    el.querySelectorAll('[data-key]').forEach(input => { if (document.activeElement !== input) input.value = view.state[input.dataset.key]; });
+    const band = Object.entries(PRICE_BANDS).find(([, [low, high]]) => low === view.state.min_price && high === view.state.max_price);
+    el.querySelector('[data-band]').value = band ? band[0] : (view.state.min_price || view.state.max_price ? 'custom' : '');
+    el.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === view.state.view));
+    el.querySelector('[data-download]').href = `/api/stockout?${query({format: 'csv', sort: view.state.sort, order: view.state.order})}`;
+  };
+  view.refresh = async () => {
+    saveUrlState();
+    view.syncControls();
+    const request = ++view.request;
+    const offset = Number(view.state.page) * STOCKOUT_PAGE_SIZE;
+    const brandsQuery = query();
+    const [listResponse, brandsResponse] = await Promise.all([
+      fetch(`/api/stockout?${query({offset: String(offset), limit: String(STOCKOUT_PAGE_SIZE)})}`),
+      fetch(`/api/stockout/brands?${brandsQuery}`),
+    ]);
+    if (request !== view.request) return;
+    const list = await listResponse.json();
+    const brands = await brandsResponse.json();
+    const body = el.querySelector('[data-body]');
+    if (!listResponse.ok || !brandsResponse.ok) {
+      body.innerHTML = `<tr><td class="empty" colspan="12">${escapeHtml(list.error || brands.error || 'Unable to load')}</td></tr>`;
+      return;
+    }
+    el.querySelector(`#${prefix}-brand-list`).innerHTML = brands.rows.map(row => `<option value="${escapeHtml(row.brand)}">${row.products} products</option>`).join('');
+    const categorySelect = el.querySelector('[data-key="category"]');
+    categorySelect.innerHTML = `<option value="">All categories</option>${brands.categories.map(row => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)} (${row.products})</option>`).join('')}`;
+    categorySelect.value = view.state.category;
+    el.querySelector('[data-count]').textContent = `${list.total.toLocaleString()} of ${list.products_in_city.toLocaleString()} products`;
+    const pageCount = Math.max(1, Math.ceil(list.total / STOCKOUT_PAGE_SIZE));
+    const head = el.querySelector('[data-head]');
+    const pager = el.querySelector('.view-pager');
+    const captionText = caption.replace('{day}', escapeHtml(list.planning_day || ''));
+    if (view.state.view === 'brands') {
+      head.innerHTML = `<tr>${BRAND_COLUMNS.map(label => `<th>${label}</th>`).join('')}</tr>`;
+      body.innerHTML = brands.rows.slice(0, 100).map(row => `<tr class="brand-row" data-brand="${escapeHtml(row.brand)}"><td>${escapeHtml(row.brand || '(no brand)')}${row.estimated_products ? ' *' : ''}</td><td>${fmt(row.units_28d)}</td><td>₹${fmt(row.revenue_28d)}</td><td>${fmt(row.products)}</td><td class="${row.stockout_risk ? 'risk' : ''}">${fmt(row.stockout_risk)}</td><td>${fmt(row.reorder_units)}</td><td>${fmt(row.avg_cover, 1)} days</td></tr>`).join('') || `<tr><td class="empty" colspan="7">No brands match these filters</td></tr>`;
+      pager.style.display = 'none';
+      el.querySelector('.view-caption').innerHTML = `${captionText} By brand: top ${Math.min(100, brands.total)} of ${brands.total.toLocaleString()} brands by units sold; click a brand to filter. * includes products without history, counted as 28 × forecast daily (estimated). Revenue = units × MRP (estimated).`;
+      return;
+    }
+    el.querySelector('.view-caption').innerHTML = captionText;
+    head.innerHTML = `<tr>${STOCKOUT_COLUMNS.map(([label, key]) => {
+      if (!key) return `<th>${label}</th>`;
+      const arrow = view.state.sort === key ? ((view.state.order || (['cover', 'price'].includes(key) ? 'asc' : 'desc')) === 'asc' ? ' ↑' : ' ↓') : '';
+      return `<th class="sortable" data-sort="${key}">${label}${arrow}</th>`;
+    }).join('')}</tr>`;
+    body.innerHTML = list.rows.map(stockoutRowHtml).join('') || `<tr><td class="empty" colspan="12">No products match these filters</td></tr>`;
+    pager.style.display = '';
+    el.querySelector('[data-page-label]').textContent = list.total ? `Products ${offset + 1}-${Math.min(offset + STOCKOUT_PAGE_SIZE, list.total)} of ${list.total.toLocaleString()} · page ${Number(view.state.page) + 1} of ${pageCount}` : 'No products';
+    el.querySelector('[data-prev]').disabled = Number(view.state.page) === 0;
+    el.querySelector('[data-next]').disabled = Number(view.state.page) >= pageCount - 1;
+  };
+  stockoutViews.push(view);
+  return view;
+}
+function refreshStockoutViews() { stockoutViews.forEach(view => view.refresh().catch(error => console.error(error))); }
 async function load() {
   const isAdmin = document.body.classList.contains('admin-page');
   if (!isAdmin) {
@@ -699,6 +845,11 @@ async function load() {
 
   document.getElementById('alert-preview').addEventListener('click', () => requestAlert(false));
   document.getElementById('alert-send').addEventListener('click', () => requestAlert(true));
+  readUrlState();
+  const simulated = 'Simulated data: sales are synthetic POS history; stock, days until stockout, next delivery and reorder qty come from simulated stock.';
+  createStockoutView('m', 'model', 'model-view', `Tracked products, stock counted on {day}. ${simulated} Trend = last 28 days vs the 28 before.`);
+  createStockoutView('r', 'regional', 'regional-view', `Full catalog, stock simulated for {day}. ${simulated} Catalog products without sales history show their forecast instead.`);
+  refreshStockoutViews();
   await loadDashboard(selectedRegion);
   regionalData = await (await fetch('/api/regional-intelligence')).json();
   renderRegional();
@@ -774,10 +925,8 @@ function renderSummary() {
 function renderModelRisk() {
   const cover = row => `${money(row.days_of_cover)} days`;
   const emptyRow = columns => `<tr><td colspan="${columns}" class="empty">None today</td></tr>`;
-  const stockout = [...data.stockout].sort((a, b) => a.days_of_cover - b.days_of_cover).slice(0, 15);
   const overstock = [...data.overstock].sort((a, b) => b.days_of_cover - a.days_of_cover).slice(0, 15);
   document.getElementById('model-risk-scope').textContent = data.latest ? `${data.city === 'all' ? 'All cities' : selectedRegion} · ${data.latest}` : '';
-  document.getElementById('model-stockout').innerHTML = stockout.map(row => `<tr><td>${escapeHtml(row.product_name || row.sku_id)}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.days_until_delivery)} days</td><td>${escapeHtml(row.reorder_qty)} units</td></tr>`).join('') || emptyRow(5);
   document.getElementById('model-overstock').innerHTML = overstock.map(row => `<tr><td>${escapeHtml(row.product_name || row.sku_id)}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.shelf_life_days)} days</td></tr>`).join('') || emptyRow(4);
 }
 load().catch(error => {
@@ -809,6 +958,46 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_stockout(self, path, params):
+        """/api/stockout: filtered, sorted rows ({total, rows}, or every row as CSV with format=csv); /api/stockout/brands: per brand."""
+        scope = params.get("scope", "model")
+        try:
+            table = stockout_view.table_for(scope)
+            if path == "/api/stockout/brands":
+                brands = stockout_view.brand_summary(stockout_view.filter_rows(table, params, skip={"brand"}))
+                in_city = stockout_view.filter_rows(table, {"city": params.get("city", "")})
+                categories = in_city["category"].value_counts().sort_index()
+                self.send_json(200, {
+                    "total": len(brands), "rows": stockout_view.to_records(brands),
+                    "categories": [{"category": name, "products": int(count)} for name, count in categories.items() if name],
+                })
+                return
+            rows = stockout_view.sort_rows(stockout_view.filter_rows(table, params),
+                                           params.get("sort", ""), params.get("order", ""))
+            in_city = len(stockout_view.filter_rows(table, {"city": params.get("city", "")}))
+            shown = stockout_view.page(rows, params.get("offset", ""), params.get("limit", ""))
+        except stockout_view.UnknownCity as error:
+            self.send_json_not_found("Unknown city", str(error))
+            return
+        except ValueError as error:
+            self.send_json(400, {"error": str(error)})
+            return
+        except FileNotFoundError as error:
+            self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
+            return
+        if params.get("format") == "csv":
+            body = stockout_view.to_csv(rows).encode("utf-8")
+            city = re.sub(r"[^\w-]+", "_", params.get("city", "") or "all")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="stockout_{scope}_{city}.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_json(200, {"total": len(rows), "rows": stockout_view.to_records(shown), "products_in_city": in_city,
+                             "planning_day": table.attrs.get("planning_day")})
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -902,6 +1091,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if path in {"/api/stockout", "/api/stockout/brands"}:
+            self.send_stockout(path, {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()})
+            return
         if path == "/api/categories":
             body = json.dumps(read_csv_from_path(DATA_DIR / "bigbasket_categories.csv")).encode("utf-8")
             self.send_response(200)
@@ -979,5 +1171,14 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     host = "127.0.0.1"
     server = ThreadingHTTPServer((host, port), DashboardHandler)
+
+    def warm_stockout_tables():
+        # build the stockout tables in the background so the first page load is quick
+        for scope in stockout_view.SCOPES:
+            try:
+                stockout_view.table_for(scope)
+            except FileNotFoundError:
+                pass
+    threading.Thread(target=warm_stockout_tables, daemon=True).start()
     print(f"Dashboard running at http://{host}:{port}")
     server.serve_forever()
