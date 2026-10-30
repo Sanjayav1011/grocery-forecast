@@ -43,7 +43,7 @@ def trailing_mean(values, window, first):
     return means
 
 
-def simulate_inventory(true_demand, base, categories, rng):
+def simulate_inventory(true_demand, base, categories, rng, initial_stock=None, phase=None, history=None):
     """
     Runs the replenishment policy for many series at once.
 
@@ -51,6 +51,13 @@ def simulate_inventory(true_demand, base, categories, rng):
     daily demand, used before any history exists; categories: model category
     per series. Returns opening_stock, units_sold (float) and
     days_until_delivery, each (n_series, n_days).
+
+    To continue a series that already ran (generate_synthetic_data.extend),
+    pass the stock left at the end of the previous day (initial_stock), the
+    delivery phase for day 0 (deliveries on days t with (t - phase) % R == 0)
+    and the previous days' demand (history, (n_series, n_past)) for the
+    trailing average. Left as None, everything behaves as before: a random
+    phase and stock that covers the days until the first delivery.
     """
     true_demand = np.atleast_2d(np.asarray(true_demand, dtype=float))
     n_series, n_days = true_demand.shape
@@ -58,14 +65,20 @@ def simulate_inventory(true_demand, base, categories, rng):
     shelf_life = np.array([SHELF_LIFE_DAYS[c] for c in categories])
     review_days = review_days_for(categories)
 
-    phase = rng.integers(0, review_days)  # stores don't all receive on the same weekday
-    trailing_avg = trailing_mean(true_demand, 14, base)
+    if phase is None:
+        phase = rng.integers(0, review_days)  # stores don't all receive on the same weekday
+    phase = np.asarray(phase)
+    if history is None:
+        trailing_avg = trailing_mean(true_demand, 14, base)
+    else:
+        history = np.atleast_2d(np.asarray(history, dtype=float))
+        trailing_avg = trailing_mean(np.concatenate([history, true_demand], axis=1), 14, base)[:, history.shape[1]:]
     overorder = rng.random((n_series, n_days)) < OVERORDER_PROBABILITY
     overorder_mult = rng.uniform(3.0, 5.0, (n_series, n_days))
 
     opening = np.empty((n_series, n_days))
     sold = np.empty((n_series, n_days))
-    stock = base * phase  # enough to reach the first delivery
+    stock = base * phase if initial_stock is None else np.asarray(initial_stock, dtype=float)  # enough to reach the first delivery
     expires = shelf_life <= review_days  # the previous batch is spoiled by the next delivery
     for t in range(n_days):
         delivery = (t - phase) % review_days == 0

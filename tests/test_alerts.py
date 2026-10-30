@@ -42,8 +42,8 @@ def fake_project(tmp_path, monkeypatch):
     stockout = report_rows(28, "Bengaluru", latest, "snacks", 1.0) + report_rows(2, "Bengaluru", latest, "dairy", 0.5)
     stockout += report_rows(1, "Bengaluru", older, "snacks", 2.0) + report_rows(1, "Mumbai", older, "snacks", 2.0)
     overstock = report_rows(20, "Bengaluru", latest, "dairy", 30.0)
-    pd.DataFrame(stockout, columns=REPORT_COLS).to_csv(tmp_path / "stockout_risk_report.csv", index=False)
-    pd.DataFrame(overstock, columns=REPORT_COLS).to_csv(tmp_path / "overstock_risk_report.csv", index=False)
+    pd.DataFrame(stockout, columns=REPORT_COLS).to_csv(tmp_path / alerts.REPORT_FILES["stockout"], index=False)
+    pd.DataFrame(overstock, columns=REPORT_COLS).to_csv(tmp_path / alerts.REPORT_FILES["overstock"], index=False)
     vendors = {
         "Bengaluru": {"vendor_name": "Blr vendor", "vendor_email": ["blr@example.com", "blr2@example.com"],
                       "category_overrides": {}},

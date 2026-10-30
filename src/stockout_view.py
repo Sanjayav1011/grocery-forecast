@@ -4,10 +4,10 @@ stockout_view.py
 Tables behind the admin dashboard's "stocks out first" views, one row per
 product x city:
 
-  scope "model"     the tracked products on the latest day of the test
-                    window, scored with train_model.build_risk_report (the
-                    same inventory.classify_risk rule and inputs as
-                    outputs/stockout_risk_report.csv), every risk status
+  scope "model"     the tracked products on the first forecast day after
+                    config.SERVING_DATE, from serving_risk_report.build_report
+                    (the inventory.classify_risk rule behind
+                    outputs/serving_stockout_risk_report.csv), every risk status
   scope "regional"  the forecast catalog, data/bigbasket_regional_inventory.csv
 
 Tracked products get sales history from data/pos_synthetic.csv over the days
@@ -118,19 +118,16 @@ def finish(table, planning_day):
 
 
 def model_rows():
-    """Every tracked product x city on the latest test-window day, before de-duplication; and that day."""
-    from train_model import build_risk_report  # heavy imports (lightgbm, optuna), so only on first use
+    """Every tracked product x city in the serving risk report, before de-duplication; and the day stock is counted."""
+    from serving_risk_report import build_report
 
-    scored = pd.read_csv(OUTPUTS_DIR / "test_predictions.csv", parse_dates=["date"])
-    report = build_risk_report(scored.rename(columns={"pred": "predicted_units"}))
-    latest = report["date"].max()
-    rows = report[report["date"] == latest]
+    report = build_report(DATA_DIR)
     products = pd.read_csv(DATA_DIR / "sampled_products.csv", dtype={"pack_size_value": str},
-                           usecols=["sku_id", "product_name", "brand", "mrp", "pack_size_value", "pack_size_unit"])
-    table = rows.merge(products, on="sku_id", how="left").rename(
+                           usecols=["sku_id", "mrp", "pack_size_value", "pack_size_unit"])
+    table = report.merge(products, on="sku_id", how="left").rename(
         columns={"mrp": "price", "avg_daily_pred": "forecast_daily"})
     table["forecast_source"] = DIRECT
-    return table, latest
+    return table, report["date"].max()
 
 
 def regional_rows():

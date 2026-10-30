@@ -17,6 +17,19 @@ ARCHIVE_CSV = DATA_DIR / "archive_products.csv"
 LEAD_TIME_DAYS = 7  # Forecast horizon used for leak-free lags
 RANDOM_SEED = 42
 
+# Two separate dates:
+#  - evaluation: training, CV and the final test window (1 Apr - 25 Aug 2026,
+#    train_model.FINAL_TEST) use the history up to EVALUATION_END only; their
+#    results (metrics.json, test_predictions.csv, the evaluation risk
+#    reports, the model comparison) never change when the history is extended.
+#  - serving: the synthetic history is extended (with its own seed) to
+#    SERVING_DATE, the last day of data; forecasts, serving risk reports,
+#    alerts, the dashboard and festival planning run from it with the saved
+#    models (no retraining).
+EVALUATION_END = "2026-08-25"
+SERVING_DATE = "2026-10-29"
+EXTENSION_SEED = 20261029  # random stream of the history extension only
+
 # Model inputs (built by build_features.py). Every lag/rolling feature is
 # shifted by at least LEAD_TIME_DAYS so the model never sees future sales.
 FEATURE_COLS = [

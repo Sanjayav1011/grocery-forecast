@@ -216,22 +216,23 @@ def test_occasion_list_ranks_by_units_or_revenue(fake_data):
     assert len(by_revenue) == len({dashboard.product_key(row) for row in delhi["demand_by_revenue"]})
 
 
-def test_model_scope_uses_the_shared_risk_rule(fake_data):
-    # two tracked products over 7 days; latest day only, every risk status
-    rows = []
-    for day in pd.date_range(PLANNING_DAY - pd.Timedelta(days=6), PLANNING_DAY):
-        rows.append({"date": day.date(), "city": "Delhi", "sku_id": "T1", "category": "dairy", "pred": 10.0,
-                     "opening_stock": 15, "days_until_delivery": 3})
-        rows.append({"date": day.date(), "city": "Delhi", "sku_id": "T2", "category": "snacks", "pred": 20.0,
-                     "opening_stock": 100, "days_until_delivery": 3})
-    pd.DataFrame(rows).to_csv(fake_data / "test_predictions.csv", index=False)
-    pd.DataFrame([("T1", "Amul Lassi 200 ml", "Amul", 25.0, "200.0", "ml"),
-                  ("T2", "Haldiram's Bhujia 400 g", "Haldiram's", 110.0, "400.0", "g")],
-                 columns=["sku_id", "product_name", "brand", "mrp", "pack_size_value", "pack_size_unit"]).to_csv(
+def write_serving_stock(fake_data, rows):
+    """Serving opening stock (city, sku, stock, days until delivery) for the planning day, plus the product master."""
+    pd.DataFrame([{"date": PLANNING_DAY.date().isoformat(), "city": city, "sku_id": sku, "opening_stock": stock,
+                   "days_until_delivery": until} for city, sku, stock, until in rows]).to_csv(
+        fake_data / "serving_opening_stock.csv", index=False)
+    pd.DataFrame([("T1", "Amul Lassi 200 ml", "Amul", "dairy", 25.0, "200.0", "ml"),
+                  ("T2", "Haldiram's Bhujia 400 g", "Haldiram's", "snacks", 110.0, "400.0", "g")],
+                 columns=["sku_id", "product_name", "brand", "category", "mrp", "pack_size_value", "pack_size_unit"]).to_csv(
         fake_data / "sampled_products.csv", index=False)
+
+
+def test_model_scope_uses_the_shared_risk_rule(fake_data):
+    # serving: stock counted on the planning day vs the mean of its 7 daily forecasts (12 and 20 a day)
+    write_serving_stock(fake_data, [("Delhi", "T1", 15, 3), ("Delhi", "T2", 100, 3)])
     table = stockout_view.table_for("model")
     assert table.attrs["planning_day"] == PLANNING_DAY.date().isoformat()
     rows = table.set_index("sku_id")
-    assert rows.loc["T1", "risk_status"] == "stockout" and rows.loc["T1", "days_of_cover"] == 1.5
+    assert rows.loc["T1", "risk_status"] == "stockout" and rows.loc["T1", "days_of_cover"] == 1.25  # 15 / 12 < 3 days
     assert rows.loc["T2", "risk_status"] == "normal" and rows.loc["T2", "reorder_qty"] == 80  # 7x20 + 2x20 - 100
     assert rows.loc["T1", "units_28d"] == 280 and rows.loc["T1", "price"] == 25.0

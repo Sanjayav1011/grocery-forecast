@@ -17,11 +17,14 @@ One pipeline, run by `run_pipeline.py`:
 BigBasket catalog (data/archive_products.csv)
   └─ sample_products.py      344 tracked products, 43 per model category (seeded)
       └─ generate_synthetic_data.py   5 years of daily POS history per product x city
+          │                            (to 25 Aug 2026) + a serving extension to 29 Oct 2026
           └─ build_features.py        calendar, product and leak-free lag features
               ├─ festival_uplift.py   festival-week uplift per city x category, past years only
-              └─ train_model.py       LightGBM per segment, CV + held-out test, risk report
-                  └─ forecast_regional.py   direct forecasts for tracked products,
-                                            K-nearest analogs for the rest of the catalog
+              └─ train_model.py       LightGBM per segment, CV + held-out test (evaluation;
+                  │                   skipped when saved models exist)
+                  └─ forecast_regional.py   forecasts for 30 Oct - 5 Nov: direct for tracked
+                      │                     products, K-nearest analogs for the rest
+                      ├─ serving_risk_report.py   tracked products' risk on 30 Oct (alerts)
                       └─ build_bigbasket_regional_risk.py   stock simulation + risk rule
                           └─ dashboard.py   customer storefront + admin views
 ```
@@ -40,12 +43,13 @@ BigBasket catalog (data/archive_products.csv)
 | `src/festival_uplift.py` | Festival-week demand uplift per city × category × festival from past years (`data/festival_uplift.csv`) and the admin "Festival planning" list |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
-| `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
+| `src/serving_risk_report.py` | Model risk report for the serving date: tracked products, stock on the first forecast day vs the next 7 days of forecast |
+| `src/alerts.py` | Per-city vendor email alerts from the serving model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -68,14 +72,51 @@ and `pip install openpyxl`; the first pipeline step converts it.
 ## Run
 
 ```bash
-python run_pipeline.py   # ~5 minutes; prints per-step timings
+python run_pipeline.py   # ~1 minute with saved models; prints per-step timings
 python dashboard.py      # http://127.0.0.1:8000
 python -m pytest         # after the pipeline has run
 ```
 
-`run_pipeline.py` trains with the tuned parameters saved in
-`models/params_<segment>.json` (`train_model.py --trials 0`). To re-tune, run
-`python src/train_model.py --trials 120` (about 35 minutes).
+`run_pipeline.py` uses the saved models (`models/lgbm_*.txt`) and skips
+training. It only trains when there are no saved models, or with
+`--retrain`, and then with the tuned parameters in
+`models/params_<segment>.json` (`train_model.py --trials 0`). To re-tune,
+run `python src/train_model.py --trials 120` (about 35 minutes).
+Retraining rewrites every evaluation result.
+
+## Evaluation period vs serving date
+
+There are two separate dates, both in `src/config.py`.
+
+| | Dates | What uses it |
+|---|---|---|
+| **Evaluation period** | history 26 Aug 2021 – 25 Aug 2026 (`EVALUATION_END`); final test window 1 Apr – 25 Aug 2026 | training, tuning, CV folds, the final test, `metrics.json`, `test_predictions.csv`, the evaluation risk reports (`outputs/stockout_risk_report.csv` / `overstock_risk_report.csv`), `risk_confusion_matrix.py` and the model comparison: every accuracy figure |
+| **Serving date** | `SERVING_DATE` = 29 Oct 2026, the last day of data | features up to it, forecasts for 30 Oct – 5 Nov from the saved models, the serving risk report, alerts, the regional risk report, festival uplifts and planning, and every date on the admin page |
+
+The synthetic history is extended from 26 Aug to 29 Oct 2026 for serving
+only. `generate_synthetic_data.py` first writes the original history
+unchanged, then appends the extension (`extend()`), drawn from its own seed
+(`EXTENSION_SEED`). The extension uses the same demand formula, festival
+calendar, city multipliers and replenishment policy, and picks up each
+series' stock, delivery cycle and recent demand where the history left off.
+`data/serving_opening_stock.csv` is the stock on the morning of 30 Oct,
+simulated by the same policy.
+
+Rows up to 25 Aug stay byte-identical, and nothing is retrained.
+`tests/test_serving.py` checks:
+- the checksum of those rows;
+- that `metrics.json` matches the snapshot in
+  `tests/fixtures/evaluation_metrics.json`;
+- the checksums of the other evaluation outputs;
+- that continuing the inventory simulation matches one long run.
+
+Features up to 25 Aug are also identical, because every feature only
+looks back. So a retrain or a new model comparison would see exactly the
+same evaluation data.
+
+The dashboard header reads "Data as of 29 Oct 2026 · Evaluation period
+(accuracy figures): 1 Apr–25 Aug 2026", and the WAPE card is labelled with
+the evaluation period.
 
 Dashboard pages:
 
@@ -86,10 +127,11 @@ Dashboard pages:
   generated dataset.
 
 Every date on the admin page counts from the **data date**: the last day of
-sales data, 25 Aug 2026, which is the day the regional forecast was made
-from. The header reads "Data as of 25 Aug 2026". The next-festival KPI, the
-occasion banner, the 7-day window and the festival countdowns never use the
-computer's clock.
+sales data, 29 Oct 2026 (`SERVING_DATE`), which is the day the regional
+forecast was made from. The header reads "Data as of 29 Oct 2026". The
+next-festival KPI (Diwali, 8 Nov), the occasion banner, the 7-day window and
+the festival countdowns never use the computer's clock. Accuracy figures
+are labelled with the evaluation period instead.
 
 The dashboard has no authentication. Run it only on a trusted machine.
 
@@ -130,9 +172,9 @@ listed under several SKUs appear once (`unique_products()`).
   below.
 
 The model report's table holds every tracked product, not only the stockout
-rows: `train_model.build_risk_report` is re-run on
-`outputs/test_predictions.csv` for the latest day, so cover, status and
-reorder qty match `outputs/stockout_risk_report.csv` exactly. All sales,
+rows: it is `serving_risk_report.build_report`, the same rows as
+`outputs/serving_stockout_risk_report.csv`. That is stock on 30 Oct against
+the next 7 days of forecast, under the `inventory.classify_risk` rule. All sales,
 stock, cover, delivery and reorder figures come from synthetic or
 simulated data, and the views say so.
 
@@ -206,12 +248,12 @@ also returns the festival-planning calculation for that product.
 The model only forecasts 7 days ahead, so the regional section keeps two
 lists apart:
 
-- **"Highest demand — next 7 days (26 Aug–1 Sep)"** ranks by the 7-day
+- **"Highest demand — next 7 days (30 Oct–5 Nov)"** ranks by the 7-day
   forecast (units) or by revenue (7-day units × MRP, estimated), one row
   per product. There is no category boost: the old list multiplied
   keyword-matched categories by 2.5 and the rest by 0.5.
 - **"Festival planning: <festival>"** defaults to the first festival after
-  the 7-day window (Ganesh Chaturthi, 14 Sep), and any festival in the next
+  the 7-day window (Diwali, 8 Nov, at the serving date), and any festival in the next
   12 months can be picked. For each product:
 
       festival-week units = current 7-day forecast × uplift(city, category, festival)
@@ -238,9 +280,10 @@ URL state: `plan`, `plan_rank`, and `product_festival` for the panel note.
 
 ## Email alerts
 
-`src/alerts.py` emails each city's vendor the day's rows from the model risk
-report (`outputs/stockout_risk_report.csv` / `overstock_risk_report.csv`) —
-the same rows the admin page shows. It doesn't re-forecast or change the risk
+`src/alerts.py` emails each city's vendor the rows from the serving model
+risk report (`outputs/serving_stockout_risk_report.csv` /
+`serving_overstock_risk_report.csv`, stock on 30 Oct), the same rows the
+admin page shows. The evaluation reports are not used for alerts. It doesn't re-forecast or change the risk
 rule.
 
 Each email has the subject `[Stockout x | Overstock y] <City> inventory alert – <date>`,
@@ -249,7 +292,7 @@ OVERSTOCK table (top 15), and every row of the city's list attached as CSV.
 
 ```bash
 python -m src.alerts --city all                      # dry run: outputs/alerts/<date>_<city>.html/.csv
-python -m src.alerts --city Bengaluru --date 2026-08-20
+python -m src.alerts --city Bengaluru --date 2026-10-30
 python -m src.alerts --city Bengaluru --send         # real email
 python run_pipeline.py --alerts                      # pipeline, then a dry run for all cities
 ```
@@ -276,6 +319,8 @@ python run_pipeline.py --alerts                      # pipeline, then a dry run 
 
 ## Results
 
+These are from the **evaluation period** (history up to 25 Aug 2026, final
+test 1 Apr – 25 Aug 2026). The serving extension doesn't change them.
 Synthetic data, so these show the pipeline works, not real-world accuracy.
 The generator adds ±12% day-to-day noise, which alone puts the best possible
 WAPE near 9.6%.
@@ -313,7 +358,13 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
   the directly forecast SKU if there is one, else the lowest SKU id. SKU
   counts and the catalog file are unchanged.
 - Risk split: about 97.5% of tracked product-days are "normal" over the test
-  window; 99.8% of catalog products are "normal" for the coming week.
+  window (evaluation).
+- At the serving date (stock on 30 Oct, forecast 30 Oct – 5 Nov), the
+  tracked products have 1 stockout and 14 overstocks out of 1,376
+  product × city rows, and the catalog has 0 stockouts and 24 overstocks.
+  Stock was ordered from a trailing average that includes the Dussehra peak,
+  and the Diwali spike (8 Nov) falls after the 7-day window. The forecasts
+  do climb towards it: tracked sweets rise about ×3 from 30 Oct to 5 Nov.
 
 `outputs/metrics.json` has every number above plus MAE, RMSE and the tuned
 parameters.

@@ -80,12 +80,12 @@ class NoClock(datetime.date):
 
 
 def write_admin_outputs(tmp_path):
-    report = [{"date": "2026-08-25", "city": "Delhi", "sku_id": "T1", "product_name": "Amul Lassi 200 ml", "brand": "Amul",
+    report = [{"date": "2026-08-26", "city": "Delhi", "sku_id": "T1", "product_name": "Amul Lassi 200 ml", "brand": "Amul",
                "category": "dairy", "predicted_units": 12, "opening_stock": 18, "days_of_cover": 1.5, "horizon_demand": 84,
                "avg_daily_pred": 12, "days_until_delivery": 2, "shelf_life_days": 3, "reorder_qty": 90}]
-    pd.DataFrame(report).to_csv(tmp_path / "stockout_risk_report.csv", index=False)
-    pd.DataFrame(columns=list(report[0])).to_csv(tmp_path / "overstock_risk_report.csv", index=False)
-    (tmp_path / "metrics.json").write_text(json.dumps({"segments": {}}))
+    pd.DataFrame(report).to_csv(tmp_path / dashboard.SERVING_REPORTS["stockout"], index=False)
+    pd.DataFrame(columns=list(report[0])).to_csv(tmp_path / dashboard.SERVING_REPORTS["overstock"], index=False)
+    (tmp_path / "metrics.json").write_text(json.dumps({"segments": {}, "final_test_window": ["2026-04-01", "2026-06-30"]}))
     calendar = build_calendar_table("2026-01-01", "2027-03-31")
     calendar.assign(date=calendar["date"].dt.date.astype(str)).to_csv(tmp_path / "festival_calendar_5yr.csv", index=False)
 
@@ -96,7 +96,8 @@ def test_every_admin_date_counts_from_the_data_date(fake_data, monkeypatch):
     assert dashboard.data_date() == datetime.date(2026, 8, 25)
 
     payload = dashboard.dashboard_payload("Delhi")
-    assert payload["data_date"] == payload["latest"] == "2026-08-25"
+    assert payload["data_date"] == "2026-08-25" and payload["latest"] == "2026-08-26"  # stock counted the next morning
+    assert payload["evaluation_period"] == ["2026-04-01", "2026-06-30"]  # accuracy comes from its own window
     raksha = {"name": "Raksha Bandhan", "date": "2026-08-28", "days_until": 3}
     assert payload["next_festival"] == raksha
 

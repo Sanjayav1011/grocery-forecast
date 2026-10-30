@@ -1,9 +1,10 @@
 """
 alerts.py
 -----------
-Emails each city's vendor the day's stockout / overstock rows from the model
-risk report (outputs/stockout_risk_report.csv and overstock_risk_report.csv,
-written by train_model.py). Nothing here changes the forecast or the risk
+Emails each city's vendor the day's stockout / overstock rows from the
+serving model risk report (outputs/serving_stockout_risk_report.csv and
+serving_overstock_risk_report.csv, written by serving_risk_report.py for the
+morning after config.SERVING_DATE). Nothing here changes the forecast or the risk
 rule; it only formats rows that inventory.classify_risk already labelled.
 
 Vendors are in config/vendors.json: one entry per city with vendor_name,
@@ -40,6 +41,8 @@ from config import OUTPUTS_DIR, PROJECT_DIR  # noqa: E402
 
 REPORT_DIR = OUTPUTS_DIR
 ALERTS_DIR = OUTPUTS_DIR / "alerts"
+# the serving model risk report (serving_risk_report.py), not the evaluation one
+REPORT_FILES = {"stockout": "serving_stockout_risk_report.csv", "overstock": "serving_overstock_risk_report.csv"}
 VENDORS_PATH = PROJECT_DIR / "config" / "vendors.json"
 ENV_PATH = PROJECT_DIR / ".env"
 SENT_LOG_COLS = ["timestamp", "city", "vendor_name", "recipients", "stockout_count", "overstock_count",
@@ -118,9 +121,9 @@ def load_report():
     """Stockout and overstock rows of the model risk report, with risk_status."""
     frames = []
     for status in ("stockout", "overstock"):
-        path = REPORT_DIR / f"{status}_risk_report.csv"
+        path = REPORT_DIR / REPORT_FILES[status]
         if not path.exists():
-            raise AlertError(f"{path.name} not found; run src/train_model.py (or run_pipeline.py) first")
+            raise AlertError(f"{path.name} not found; run run_pipeline.py (serving_risk_report.py) first")
         frames.append(pd.read_csv(path).assign(risk_status=status))
     return pd.concat(frames, ignore_index=True)
 

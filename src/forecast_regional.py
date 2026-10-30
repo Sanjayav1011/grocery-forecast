@@ -38,7 +38,7 @@ import numpy as np
 import pandas as pd
 
 from build_features import MAPPINGS_PATH, RAW_POS_PATH, apply_categorical_mappings, engineer_features
-from config import DATA_DIR, FEATURE_COLS, LEAD_TIME_DAYS, MODELS_DIR, PRICE_ELASTICITY
+from config import DATA_DIR, FEATURE_COLS, LEAD_TIME_DAYS, MODELS_DIR, PRICE_ELASTICITY, SERVING_DATE
 from sample_products import SAMPLED_PRODUCTS_PATH, prepare_catalog
 
 OUT_PATH = DATA_DIR / "bigbasket_regional_forecast.csv"
@@ -73,7 +73,10 @@ def score_tracked(as_of=None):
     also as_of and the per-day forecasts (daily_forecasts).
     """
     pos = pd.read_csv(RAW_POS_PATH, parse_dates=["date"])
-    as_of = pos["date"].max() if as_of is None else pd.Timestamp(as_of)
+    as_of = pd.Timestamp(as_of or SERVING_DATE)
+    if as_of > pos["date"].max():
+        raise ValueError(f"no sales data for {as_of.date()} (data ends {pos['date'].max().date()}); "
+                         "re-run generate_synthetic_data.py")
     history = pos[(pos["date"] > as_of - pd.Timedelta(days=HISTORY_DAYS)) & (pos["date"] <= as_of)]
     daily, recent = daily_forecasts(history, as_of)
     forecast = daily.groupby(["sku_id", "city"])["prediction"].mean().rename("forecast_daily")
@@ -234,7 +237,7 @@ def catalog_products():
 
 def main():
     parser = argparse.ArgumentParser(description="Forecast every mapped catalog product x city.")
-    parser.add_argument("--as-of", help="forecast from this date (default: latest POS date)")
+    parser.add_argument("--as-of", help=f"forecast from this date (default: config.SERVING_DATE, {SERVING_DATE})")
     parser.add_argument("--output", default=str(OUT_PATH))
     args = parser.parse_args()
 

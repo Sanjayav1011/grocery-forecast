@@ -8,8 +8,14 @@ stopping at the first failing step, and prints how long each step took:
   build_features -> festival_uplift -> train_model --trials 0 ->
   forecast_regional -> build_bigbasket_regional_risk
 
-train_model runs with --trials 0, i.e. it reuses the tuned parameters in
-models/params_<segment>.json; run src/train_model.py --trials N to re-tune.
+train_model only runs when there are no saved models (models/lgbm_*.txt)
+or with --retrain, and then with --trials 0 (the tuned parameters in
+models/params_<segment>.json); run src/train_model.py --trials N to re-tune.
+Training and every evaluation result use the history up to
+config.EVALUATION_END only. The rest of the pipeline serves from
+config.SERVING_DATE with the saved models: generate_synthetic_data appends
+the history extension, then forecasts, the serving risk report and the
+regional risk report run from that date.
 
 --alerts adds a last step, alerts --city all: a dry run that writes each
 city's vendor alert to outputs/alerts/ without sending any email.
@@ -30,21 +36,30 @@ STEPS = [
     ["festival_uplift.py"],
     ["train_model.py", "--trials", "0"],
     ["forecast_regional.py"],
+    ["serving_risk_report.py"],
     ["build_bigbasket_regional_risk.py"],
 ]
 ALERT_STEP = ["alerts.py", "--city", "all"]  # dry run; never --send
+MODELS_DIR = SRC_DIR.parent / "models"
+TRAIN_STEP = "train_model.py"
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run the whole pipeline.")
     parser.add_argument("--alerts", action="store_true",
                         help="finish with a dry run of the vendor email alerts (nothing is sent)")
+    parser.add_argument("--retrain", action="store_true",
+                        help="retrain the models (and rewrite every evaluation result) even if saved models exist")
     args = parser.parse_args()
+    saved_models = all((MODELS_DIR / f"lgbm_{segment}.txt").exists() for segment in ("perishable", "nonperishable"))
 
     timings = []
     started = time.perf_counter()
     for step in STEPS + ([ALERT_STEP] if args.alerts else []):
         name = " ".join(step)
+        if step[0] == TRAIN_STEP and saved_models and not args.retrain:
+            print(f"\n=== {name}: skipped, using the saved models (--retrain to retrain) ===", flush=True)
+            continue
         print(f"\n=== {name} ===", flush=True)
         step_started = time.perf_counter()
         result = subprocess.run([sys.executable, *step], cwd=SRC_DIR)

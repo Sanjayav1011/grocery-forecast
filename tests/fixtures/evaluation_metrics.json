@@ -1,0 +1,233 @@
+{
+  "target": "demand",
+  "final_test_window": [
+    "2026-04-01",
+    "2026-08-25"
+  ],
+  "cv_folds": [
+    {
+      "train_end": "2025-03-24",
+      "valid_start": "2025-04-01",
+      "valid_end": "2025-06-30"
+    },
+    {
+      "train_end": "2025-06-23",
+      "valid_start": "2025-07-01",
+      "valid_end": "2025-09-14"
+    },
+    {
+      "train_end": "2025-09-07",
+      "valid_start": "2025-09-15",
+      "valid_end": "2025-12-31"
+    },
+    {
+      "train_end": "2025-12-24",
+      "valid_start": "2026-01-01",
+      "valid_end": "2026-03-31"
+    }
+  ],
+  "segments": {
+    "perishable": {
+      "n_train": 570352,
+      "n_test": 50568,
+      "final_test": {
+        "overall": {
+          "n_rows": 50568,
+          "MAE": 3.528,
+          "RMSE": 6.384,
+          "WAPE_%": 10.14,
+          "MASE": 0.237,
+          "Bias_%": 0.52,
+          "WAPE_vs_true_demand_%": 10.08
+        },
+        "festival_weeks": {
+          "n_rows": 4472,
+          "MAE": 5.21,
+          "RMSE": 8.993,
+          "WAPE_%": 11.29,
+          "MASE": 0.351,
+          "Bias_%": 3.59,
+          "WAPE_vs_true_demand_%": 11.23
+        },
+        "stockout_days": {
+          "n_rows": 151,
+          "MAE": 6.684,
+          "RMSE": 9.283,
+          "WAPE_%": 18.75,
+          "MASE": 0.45,
+          "Bias_%": 16.5,
+          "WAPE_vs_true_demand_%": 14.3
+        }
+      },
+      "final_test_wape_by_category": {
+        "dairy": 10.01,
+        "sweets": 10.43
+      },
+      "cv_wape_by_fold": {
+        "baseline": [
+          10.18,
+          10.96,
+          10.17,
+          10.66
+        ],
+        "tuned": [
+          9.97,
+          10.76,
+          9.93,
+          10.27
+        ],
+        "baseline_mean": 10.49,
+        "tuned_mean": 10.23
+      },
+      "params": {
+        "objective": "tweedie",
+        "tweedie_variance_power": 1.4436628387595156,
+        "learning_rate": 0.015046038949735878,
+        "num_leaves": 30,
+        "max_depth": 5,
+        "min_child_samples": 197,
+        "subsample": 0.7219472968418418,
+        "subsample_freq": 1,
+        "colsample_bytree": 0.9206438499787184,
+        "reg_alpha": 9.009937010968205,
+        "reg_lambda": 0.008000113053331807,
+        "n_estimators": 1978
+      },
+      "tuning": {
+        "n_trials": 120,
+        "seconds": 1162.3
+      }
+    },
+    "nonperishable": {
+      "n_train": 1711056,
+      "n_test": 151704,
+      "final_test": {
+        "overall": {
+          "n_rows": 151704,
+          "MAE": 3.484,
+          "RMSE": 6.834,
+          "WAPE_%": 10.25,
+          "MASE": 0.339,
+          "Bias_%": -0.36,
+          "WAPE_vs_true_demand_%": 10.19
+        },
+        "festival_weeks": {
+          "n_rows": 13416,
+          "MAE": 4.465,
+          "RMSE": 8.787,
+          "WAPE_%": 10.95,
+          "MASE": 0.435,
+          "Bias_%": 0.32,
+          "WAPE_vs_true_demand_%": 10.91
+        },
+        "stockout_days": {
+          "n_rows": 221,
+          "MAE": 5.921,
+          "RMSE": 9.833,
+          "WAPE_%": 11.12,
+          "MASE": 0.577,
+          "Bias_%": 4.2,
+          "WAPE_vs_true_demand_%": 8.81
+        }
+      },
+      "final_test_wape_by_category": {
+        "beverages": 10.21,
+        "fruits": 10.21,
+        "household": 10.47,
+        "personal_care": 10.51,
+        "snacks": 10.31,
+        "vegetables": 10.16
+      },
+      "cv_wape_by_fold": {
+        "baseline": [
+          10.34,
+          10.92,
+          10.46,
+          10.85
+        ],
+        "tuned": [
+          10.17,
+          10.69,
+          10.34,
+          10.55
+        ],
+        "baseline_mean": 10.64,
+        "tuned_mean": 10.44
+      },
+      "params": {
+        "objective": "tweedie",
+        "tweedie_variance_power": 1.3007579373238245,
+        "learning_rate": 0.015087908807997647,
+        "num_leaves": 38,
+        "max_depth": 4,
+        "min_child_samples": 21,
+        "subsample": 0.7191518712946011,
+        "subsample_freq": 1,
+        "colsample_bytree": 0.6987787823363422,
+        "reg_alpha": 5.20931102430001,
+        "reg_lambda": 0.11382217320682449,
+        "n_estimators": 2520
+      },
+      "tuning": {
+        "n_trials": 120,
+        "seconds": 856.2
+      }
+    }
+  },
+  "risk_split_%": {
+    "latest_day": {
+      "Bengaluru": {
+        "stockout": 3.8,
+        "normal": 94.8,
+        "overstock": 1.5
+      },
+      "Chennai": {
+        "stockout": 2.0,
+        "normal": 97.1,
+        "overstock": 0.9
+      },
+      "Delhi": {
+        "stockout": 2.6,
+        "normal": 96.2,
+        "overstock": 1.2
+      },
+      "Mumbai": {
+        "stockout": 1.7,
+        "normal": 97.1,
+        "overstock": 1.2
+      }
+    },
+    "whole_test_window": {
+      "Bengaluru": {
+        "stockout": 0.9,
+        "normal": 97.9,
+        "overstock": 1.2
+      },
+      "Chennai": {
+        "stockout": 1.0,
+        "normal": 97.7,
+        "overstock": 1.3
+      },
+      "Delhi": {
+        "stockout": 1.3,
+        "normal": 97.4,
+        "overstock": 1.3
+      },
+      "Mumbai": {
+        "stockout": 1.2,
+        "normal": 97.6,
+        "overstock": 1.2
+      }
+    }
+  },
+  "legacy": [
+    {
+      "segment": "perishable",
+      "MAPE_%": 10.47
+    },
+    {
+      "segment": "nonperishable",
+      "MAPE_%": 10.7
+    }
+  ]
+}

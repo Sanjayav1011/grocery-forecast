@@ -16,7 +16,7 @@ import forecast_regional
 import product_detail
 import stockout_view
 from config import DATA_DIR
-from test_dashboard_filters import FALLING, RISING, fake_data, get, server  # noqa: F401  (pytest fixtures)
+from test_dashboard_filters import FALLING, RISING, fake_data, get, server, write_serving_stock  # noqa: F401  (pytest fixtures)
 
 TODAY = pd.Timestamp("2026-08-25")
 
@@ -74,14 +74,10 @@ def test_analog_daily_shape_is_the_weighted_analog_days_with_mean_forecast_daily
 
 
 def test_model_scope_details_come_from_the_risk_report(server, fake_data):
-    pd.DataFrame([{"date": "2026-08-25", "city": "Delhi", "sku_id": "T1", "category": "dairy", "pred": 10.0,
-                   "opening_stock": 15, "days_until_delivery": 3}]).to_csv(fake_data / "test_predictions.csv", index=False)
-    pd.DataFrame([("T1", "Amul Lassi 200 ml", "Amul", 25.0, "200.0", "ml")],
-                 columns=["sku_id", "product_name", "brand", "mrp", "pack_size_value", "pack_size_unit"]).to_csv(
-        fake_data / "sampled_products.csv", index=False)
+    write_serving_stock(fake_data, [("Delhi", "T1", 15, 3)])
     product = get(server, "/api/product", sku_id="T1", scope="model")
-    assert product["stock"] == {"units": 15, "date": "2026-08-25", "simulated": True}
-    assert product["details"]["risk_status"] == "stockout" and product["details"]["days_of_cover"] == 1.5
+    assert product["stock"] == {"units": 15, "date": "2026-08-26", "simulated": True}  # the serving morning
+    assert product["details"]["risk_status"] == "stockout" and product["details"]["days_of_cover"] == 1.25
 
 
 @pytest.mark.parametrize("params", [{"sku_id": "NOPE"}, {"sku_id": "T1", "city": "Atlantis"}, {"sku_id": ""}])

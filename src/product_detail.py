@@ -160,8 +160,9 @@ def product_detail(city, sku_id, scope="regional", festival=""):
 
     first = today - pd.Timedelta(days=CHART_DAYS - 1)
     last = today + pd.Timedelta(days=LEAD_TIME_DAYS)
-    festivals = festival_df()
-    festivals = festivals[festivals["date"].between(first, last)]
+    all_festivals = festival_df()
+    festivals = all_festivals[all_festivals["date"].between(first, last)]
+    after = all_festivals[(all_festivals["date"] > last) & (all_festivals["date"] <= last + pd.Timedelta(days=14))].head(1)
     return {
         "city": city, "sku_id": sku_id, "scope": scope, "today": today.date().isoformat(),
         "details": {
@@ -177,6 +178,9 @@ def product_detail(city, sku_id, scope="regional", festival=""):
         "forecast": forecast,
         "festivals": [{"date": day.date().isoformat(), "name": name}
                       for day, name in festivals[["date", "festival_name"]].itertuples(index=False)],
+        # a festival just past the chart (e.g. Diwali 3 days after the forecast window), shown at its edge
+        "festival_after": {"date": after["date"].iloc[0].date().isoformat(), "name": after["festival_name"].iloc[0]}
+                          if not after.empty else None,
         "analogs": analogs,
         "festival_planning": festival_note(city, row["model_category"] if "model_category" in row else row["category"],
                                            row["forecast_daily"], festival, today) if festival else None,

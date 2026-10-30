@@ -21,6 +21,9 @@ CATALOG_CACHE = None
 STOREFRONT_CATALOG_CACHE = None
 REGIONAL_INTELLIGENCE_CACHE = None
 NOT_FORECAST_FILE = "bigbasket_not_forecast.csv"  # written by src/forecast_regional.py
+# the model risk report for the serving date (src/serving_risk_report.py); the evaluation
+# reports (stockout_risk_report.csv, 1 Apr - 25 Aug 2026) only feed accuracy figures
+SERVING_REPORTS = {"stockout": "serving_stockout_risk_report.csv", "overstock": "serving_overstock_risk_report.csv"}
 
 
 def dataset_paths():
@@ -69,9 +72,6 @@ def data_date():
             first = next(csv.DictReader(file), None)
         if first:
             return date.fromisoformat(first["forecast_start"]) - timedelta(days=1)
-    report = OUTPUTS_DIR / "stockout_risk_report.csv"
-    if report.exists():
-        return date.fromisoformat(max(row["date"] for row in read_csv_from_path(report)))
     return None
 
 
@@ -137,21 +137,26 @@ def regional_intelligence():
 
 
 def dashboard_payload(city):
-    """/api/dashboard: today's model risk rows (all cities or one), the next festival and the KPIs."""
+    """
+    /api/dashboard: the serving model risk rows (all cities or one), the next
+    festival and the KPIs. Accuracy (metrics.json) is from the evaluation
+    period, a separate, earlier window: evaluation_period says which.
+    """
     city = city.strip().casefold()
-    stockout = read_csv("stockout_risk_report.csv")
-    overstock = read_csv("overstock_risk_report.csv")
-    # Reports cover every day of the test window; "today" is the latest date.
-    latest = max((row["date"] for row in stockout + overstock), default=None)
+    stockout = read_csv(SERVING_REPORTS["stockout"])
+    overstock = read_csv(SERVING_REPORTS["overstock"])
+    latest = max((row["date"] for row in stockout + overstock), default=None)  # the day stock is counted
     stockout = [row for row in stockout if row["date"] == latest]
     overstock = [row for row in overstock if row["date"] == latest]
     if city and city != "all":
         stockout = [row for row in stockout if row["city"].casefold() == city]
         overstock = [row for row in overstock if row["city"].casefold() == city]
     today = data_date()
+    metrics = read_json("metrics.json")
     return {
-        "metrics": read_json("metrics.json"), "stockout": stockout, "overstock": overstock,
+        "metrics": metrics, "stockout": stockout, "overstock": overstock,
         "latest": latest, "data_date": today.isoformat() if today else None,
+        "evaluation_period": metrics.get("final_test_window"),
         "next_festival": next_festival(read_csv_from_path(DATA_DIR / "festival_calendar_5yr.csv"), today),
         "city": city or "all", "tracked_products": tracked_product_count(),
     }
@@ -929,6 +934,10 @@ function productChart(product) {
     parts.push(`<line x1="${fx}" x2="${fx}" y1="${labelY + 3}" y2="${m.top + plotH}" stroke="${CHART_COLORS.muted}" stroke-width="1" stroke-opacity="0.55"/>`);
     parts.push(`<text x="${fx}" y="${labelY}" text-anchor="${anchor}" font-size="9" fill="${CHART_COLORS.text}">${escapeHtml(festival.name)}</text>`);
   });
+  if (product.festival_after) {
+    const after = product.festival_after;
+    parts.push(`<text x="${W - m.right}" y="${m.top - 8}" text-anchor="end" font-size="9" fill="${CHART_COLORS.text}">${escapeHtml(after.name)} ${escapeHtml(shortDate(after.date))} (in ${index(after.date) - todayIndex} days) →</text>`);
+  }
   const stockY = stockOnScale ? y(stock) : m.top;
   parts.push(`<line x1="${m.left}" x2="${W - m.right}" y1="${stockY}" y2="${stockY}" stroke="${CHART_COLORS.text}" stroke-width="1" stroke-opacity="0.7"/>`);
   parts.push(`<text x="${m.left + 4}" y="${stockY - 4}" font-size="9" fill="${CHART_COLORS.text}">${stockOnScale ? '' : '↑ '}Stock ${stock.toLocaleString('en-IN')} units (simulated)${stockOnScale ? '' : ', off scale'}</text>`);
@@ -1176,23 +1185,24 @@ async function loadDashboard(city) {
 }
 function renderSummary() {
   const statusEl = document.getElementById('status');
-  if (statusEl) statusEl.textContent = data.data_date ? `Data as of ${longDate(data.data_date)}` : 'NO RISK DATA';
+  const evaluation = data.evaluation_period ? `${shortDate(data.evaluation_period[0])}–${longDate(data.evaluation_period[1])}` : '–';
+  if (statusEl) statusEl.textContent = data.data_date ? `Data as of ${longDate(data.data_date)} · Evaluation period (accuracy figures): ${evaluation}` : 'NO RISK DATA';
   const festival = data.next_festival;
   const festivalLabel = festival ? `${escapeHtml(festival.name)} · ${festival.days_until}d` : 'None scheduled';
-  const riskCaption = `Model forecast · ${data.tracked_products ?? '–'} tracked products`;
+  const riskCaption = `Model forecast · ${data.tracked_products ?? '–'} tracked products · stock on ${data.latest ? shortDate(data.latest) : '–'} (simulated)`;
   const segmentNames = {perishable: 'Perishable', nonperishable: 'Non-perishable'};
   const segments = (data.metrics && data.metrics.segments) || {};
   const wapeLabel = Object.entries(segments).map(([segment, metric]) =>
     `${escapeHtml(segmentNames[segment] || segment)} ${metric.final_test.overall['WAPE_%']}%`
   ).join('<br>') || 'n/a';
-  document.getElementById('summary').innerHTML =`<div class="metric"><span>Stockout risk today</span><strong class="red">${data.stockout.length} products</strong><small class="metric-note">${riskCaption}</small></div><div class="metric"><span>Overstock risk today</span><strong class="amber">${data.overstock.length} products</strong><small class="metric-note">${riskCaption}</small></div><div class="metric"><span>Next festival</span><strong>${festivalLabel}</strong></div><div class="metric"><span>Forecast WAPE</span><strong>${wapeLabel}</strong></div>`;
+  document.getElementById('summary').innerHTML =`<div class="metric"><span>Stockout risk${data.latest ? ` on ${shortDate(data.latest)}` : ''}</span><strong class="red">${data.stockout.length} products</strong><small class="metric-note">${riskCaption}</small></div><div class="metric"><span>Overstock risk${data.latest ? ` on ${shortDate(data.latest)}` : ''}</span><strong class="amber">${data.overstock.length} products</strong><small class="metric-note">${riskCaption}</small></div><div class="metric"><span>Next festival</span><strong>${festivalLabel}</strong></div><div class="metric"><span>Forecast WAPE</span><strong>${wapeLabel}</strong><small class="metric-note">Evaluation period ${evaluation} (held-out test window), not the serving date</small></div>`;
   renderModelRisk();
 }
 function renderModelRisk() {
   const cover = row => `${money(row.days_of_cover)} days`;
   const emptyRow = columns => `<tr><td colspan="${columns}" class="empty">None today</td></tr>`;
   const overstock = [...data.overstock].sort((a, b) => b.days_of_cover - a.days_of_cover).slice(0, 15);
-  document.getElementById('model-risk-scope').textContent = data.latest ? `${data.city === 'all' ? 'All cities' : selectedRegion} · ${data.latest}` : '';
+  document.getElementById('model-risk-scope').textContent = data.latest ? `${data.city === 'all' ? 'All cities' : selectedRegion} · stock on ${longDate(data.latest)}, forecast for the next 7 days` : '';
   document.getElementById('model-overstock').innerHTML = overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'model')}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.shelf_life_days)} days</td></tr>`).join('') || emptyRow(4);
 }
 load().catch(error => {
