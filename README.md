@@ -49,9 +49,10 @@ BigBasket catalog (data/archive_products.csv)
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
+| `src/impact.py` | Estimated business impact per city: ₹ sales protected / missed, spoilage avoided, false-alarm cost (evaluation window) and ₹ at risk this week / Diwali value at risk (serving) |
 | `src/explain_forecast.py` | Forecast explanations from LightGBM SHAP (`pred_contrib`): per-product drivers in units/day (`/api/explain`) and global importance charts |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py`, `tests/test_impact.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -325,6 +326,55 @@ GET /api/explain/importance -> {window, note, segments: {perishable|nonperishabl
 ```
 
 An unknown city or SKU returns a 404 JSON error.
+
+### Business impact (admin)
+
+`src/impact.py` (the last pipeline step, a few seconds) estimates the
+rupee value of the risk alerts per city. It writes
+`outputs/impact_summary.json` and `outputs/impact_by_city.png` (one panel
+per KPI, one bar per city). On the admin page, the "Business impact" card
+sits under "What drives demand": a tile per KPI with a one-line
+explanation, then a table per city with a total row. Everything is
+labelled as an estimate on simulated sales and stock. Values are at MRP
+(selling price), not margin; missing MRPs use the category median, as the
+generator does.
+
+**Evaluation window** (1 Apr–25 Aug 2026, tracked products,
+`outputs/test_predictions.csv`). Each product × city × day gets two labels
+from the same delivery-aware rule as `risk_confusion_matrix.py`
+(`inventory.classify_risk` on the next 7 days):
+- **Flagged:** the rule applied to the forecast.
+- **Actual:** the rule applied to true demand.
+
+A stockout lasts until the next delivery, so every day of a delivery cycle
+would repeat the same lost sales. Each cycle (product × city × next
+delivery date) is therefore counted once, on its first day in the window,
+and only if the window reaches its next delivery. That gives 36,075 cycles.
+
+| KPI | Cycles | Value |
+|---|---|---|
+| ₹ sales protected | real stockout, flagged (314) | shortfall × MRP, where shortfall = max(0, true demand until the next delivery − opening stock) |
+| ₹ sales still missed | real stockout, not flagged (37) | the same shortfall × MRP |
+| ₹ spoilage avoided | real overstock, flagged (709) | max(0, stock − true daily demand × shelf life) × MRP: the units that expire unsold |
+| ₹ false-alarm cost | flagged stockout, not real (248) | extra units ordered early × MRP × 2% carrying cost for one week (`CARRYING_COST_PER_WEEK`). Extra units = reorder qty on the forecast − reorder qty on true demand |
+
+Two of these are upper bounds:
+- **Sales protected** assumes every correct alert leads to a top-up that
+  arrives in time.
+- **Spoilage avoided** assumes the flagged overstock is fully recovered,
+  but the stock has already arrived. In practice a markdown or transfer
+  saves part of it.
+
+It is large because the simulator occasionally over-orders 3–5×
+(5% of deliveries) on sweets and dairy, which keep for 3–4 days.
+
+**Serving date** (stock counted 30 Oct), planning estimates:
+- **₹ at risk this week:** for today's stockout products in the model risk
+  report, max(0, 7-day forecast − stock) × MRP.
+- **₹ Diwali value at risk:** for Diwali-readiness "Order now" products,
+  shortfall × MRP. Products without an MRP count as ₹0.
+
+`GET /api/impact` returns `impact_summary.json`.
 
 ### Next 7 days and festival planning (admin)
 

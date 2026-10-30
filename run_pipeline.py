@@ -7,7 +7,7 @@ stopping at the first failing step, and prints how long each step took:
   import_archive_products -> festival_calendar -> generate_synthetic_data ->
   build_features -> festival_uplift -> train_model --trials 0 ->
   forecast_regional -> serving_risk_report -> explain_forecast ->
-  build_bigbasket_regional_risk
+  build_bigbasket_regional_risk -> impact
 
 train_model only runs when there are no saved models (models/lgbm_*.txt)
 or with --retrain, and then with --trials 0 (the tuned parameters in
@@ -40,6 +40,7 @@ STEPS = [
     ["serving_risk_report.py"],
     ["explain_forecast.py"],
     ["build_bigbasket_regional_risk.py"],
+    ["impact.py"],
 ]
 ALERT_STEP = ["alerts.py", "--city", "all"]  # dry run; never --send
 MODELS_DIR = SRC_DIR.parent / "models"

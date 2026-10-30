@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, quote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR, LEAD_TIME_DAYS
 import explain_forecast
+import impact
 import festival_readiness
 import festival_uplift
 import product_detail
@@ -380,7 +381,7 @@ PAGE = """<!doctype html>
     .product-panel { position:fixed; z-index:6; top:0; right:0; width:min(860px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); visibility:hidden; transition:transform .2s ease, visibility .2s; } .product-panel.open { transform:translateX(0); visibility:visible; } .product-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; } .product-panel-head h2 { margin:0; font-size:16px; color:var(--text); } .product-panel-head button { border:0; background:transparent; font-size:22px; line-height:1; cursor:pointer; color:var(--muted); } .product-panel h3 { margin:18px 0 8px; font-size:12px; color:var(--text); } .product-panel .risk { color:var(--red); } .product-panel td { font-size:10px; padding:7px 10px; }
     .product-layout { display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:18px; margin-top:12px; } .chart-box { position:relative; } .chart-box svg { display:block; width:100%; height:auto; } .chart-legend { display:flex; flex-wrap:wrap; gap:4px 12px; margin-bottom:6px; color:var(--muted); font-size:10px; } .key { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:5px; vertical-align:middle; } .key.dotted { border-top-style:dotted; } .key.dashed { border-top-style:dashed; } .swatch { display:inline-block; width:10px; height:10px; margin-right:5px; border-radius:2px; opacity:.3; vertical-align:middle; } .chart-tooltip { position:absolute; top:40px; min-width:170px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--muted); font-size:10px; line-height:1.6; box-shadow:0 4px 12px rgba(20,60,35,.12); pointer-events:none; } .chart-tooltip strong { color:var(--text); font-size:11px; } .tip-date { color:var(--text); font-weight:600; } .product-facts { display:grid; grid-template-columns:auto 1fr; align-content:start; gap:7px 10px; margin:0; font-size:11px; } .product-facts dt { color:var(--muted); font-size:10px; } .product-facts dd { margin:0; color:var(--text); } .chart-table { margin-top:14px; font-size:11px; } .chart-table summary { color:var(--green); cursor:pointer; } .chart-table .table-wrap { max-height:300px; overflow:auto; margin-top:8px; }
     @media (max-width:700px) { .product-layout { grid-template-columns:1fr; } }
-    .explain { margin-top:14px; } .explain svg { display:block; width:100%; max-width:620px; height:auto; } .explain .swatch { opacity:1; } .explain-summary { color:var(--text); font-size:11px; margin:0 0 6px; } .drivers-chart { padding:8px 12px 4px; } .drivers-chart svg { display:block; width:100%; height:auto; }
+    .explain { margin-top:14px; } .explain svg { display:block; width:100%; max-width:620px; height:auto; } .explain .swatch { opacity:1; } .explain-summary { color:var(--text); font-size:11px; margin:0 0 6px; } .drivers-chart { padding:8px 12px 4px; } .impact-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; } .impact-tiles .region-metric small { display:block; color:var(--muted); font-size:10px; line-height:1.4; margin-top:6px; } .impact-tiles .impact-kind { display:block; color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.4px; margin-top:6px; } @media (max-width:700px) { .impact-tiles { grid-template-columns:1fr 1fr; } } .drivers-chart svg { display:block; width:100%; height:auto; }
     .datasets { margin-top:34px; } .dataset-toolbar { display:flex; align-items:center; gap:10px; margin:14px 0; } .dataset-toolbar select, .dataset-toolbar a { border:1px solid #b9d5be; border-radius:7px; background:#fff; color:var(--text); padding:8px 10px; font-size:11px; } .dataset-toolbar a { text-decoration:none; } .dataset-meta { color:var(--muted); font-size:11px; } .dataset-table { max-height:390px; overflow:auto; } .dataset-table table { min-width:720px; } .dataset-table th { position:sticky; top:0; } .dataset-page { display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); font-size:11px; } .dataset-page button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 10px; cursor:pointer; }
     .admin-only { display:none !important; } .page-nav { display:flex; align-items:center; gap:8px; } .page-nav a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:#28633d; padding:9px 12px; text-decoration:none; font-size:11px; } .page-nav a[aria-current="page"] { background:var(--green); border-color:var(--green); color:#fff; } .header-actions { display:flex; align-items:center; gap:10px; }
     body.admin-page .admin-only { display:block !important; } body.admin-page .summary { display:grid !important; } body.admin-page .filters { display:flex !important; } body.admin-page main > .table-wrap.admin-only { display:block !important; } body.admin-page .customer-only { display:none !important; }
@@ -489,6 +490,7 @@ PAGE = """<!doctype html>
   <div class="summary admin-only" id="summary"></div>
     <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
     <section class="model-risk admin-only" id="drivers-card"><div class="catalog-head"><h2>What drives demand <span id="drivers-scope" class="subhead"></span></h2></div><div class="regional-columns"><div class="regional-panel"><h3>Perishable (dairy, sweets)</h3><div class="drivers-chart" id="drivers-perishable"></div></div><div class="regional-panel"><h3>Non-perishable</h3><div class="drivers-chart" id="drivers-nonperishable"></div></div></div><p class="subhead" id="drivers-caption"></p></section>
+    <section class="model-risk admin-only" id="impact-card"><div class="catalog-head"><h2>Business impact <span id="impact-scope" class="subhead"></span></h2></div><div class="impact-tiles" id="impact-tiles"></div><div class="regional-panel" style="margin-top:12px"><h3>By city</h3><div class="table-wrap"><table><thead id="impact-head"></thead><tbody id="impact-body"></tbody></table></div></div><p class="subhead" id="impact-caption"></p></section>
     <div class="section-eyebrow customer-only">Picked for your kitchen</div><div class="catalog-head customer-only"><h2>Shop groceries <span id="catalog-count" class="subhead"></span></h2><div class="subhead">Fresh picks for every day</div></div>
   <div class="catalog customer-only" id="catalog"></div>
     <div class="storefront-pagination customer-only"><button id="customer-prev" type="button">Previous</button><span id="customer-page-label"></span><button id="customer-next" type="button">Next</button></div>
@@ -1113,6 +1115,34 @@ async function renderDriversCard() {
   document.getElementById('drivers-scope').textContent = `· global importance, top 10 features per model`;
   document.getElementById('drivers-caption').textContent = `Mean |SHAP| per feature on the evaluation test window (${shortDate(payload.window[0])}–${shortDate(payload.window[1])} ${payload.window[1].slice(0, 4)}, simulated sales history), in the model's log scale; ~% = the typical effect on a forecast. "Product" is the product's own identity code: what the model learned about each item beyond price, brand and pack size.`;
 }
+const IMPACT_KPIS = [
+  ['sales_protected', 'evaluation', 'Sales protected', 'Real stockouts the alerts flagged: true-demand shortfall before the next delivery × MRP.'],
+  ['sales_missed', 'evaluation', 'Sales still missed', 'Real stockouts the alerts did not flag: the same shortfall × MRP.'],
+  ['spoilage_avoided', 'evaluation', 'Spoilage avoided', 'Overstock flagged correctly: units expiring unsold (stock − true demand over the shelf life) × MRP. Upper bound: the stock has already arrived.'],
+  ['false_alarm_cost', 'evaluation', 'False-alarm cost', 'False stockout alarms: extra units reordered early × MRP × 2% carrying cost for one week.'],
+  ['at_risk_this_week', 'serving', 'At risk this week', 'Stockout products in the model risk report: (7-day forecast − stock) × MRP.'],
+  ['festival_value_at_risk', 'serving', 'Diwali value at risk', 'Diwali-readiness “Order now” products: shortfall × MRP.'],
+];
+function rupees(value) {
+  if (value >= 1e7) return `₹${(value / 1e7).toLocaleString('en-IN', {maximumFractionDigits: 2})} Cr`;
+  if (value >= 1e5) return `₹${(value / 1e5).toLocaleString('en-IN', {maximumFractionDigits: 2})} L`;
+  return `₹${Math.round(value).toLocaleString('en-IN')}`;
+}
+async function renderImpactCard() {
+  const response = await fetch('/api/impact');
+  const payload = await response.json();
+  if (!response.ok) { document.getElementById('impact-caption').textContent = payload.error || 'Impact estimates unavailable'; return; }
+  const ev = payload.evaluation, sv = payload.serving;
+  const kind = section => section === 'evaluation' ? `Estimate · evaluation ${shortDate(ev.window[0])}–${shortDate(ev.window[1])}` : `Planning estimate · stock on ${shortDate(sv.stock_date)}`;
+  const label = (key, text) => key === 'festival_value_at_risk' ? `${sv.festival} value at risk` : text;
+  document.getElementById('impact-tiles').innerHTML = IMPACT_KPIS.map(([key, section, text, help]) =>
+    `<div class="region-metric"><span>₹ ${escapeHtml(label(key, text))}</span><strong>${rupees((section === 'evaluation' ? ev : sv).total[key])}</strong><small>${escapeHtml(help)}</small><span class="impact-kind">${escapeHtml(kind(section))}</span></div>`).join('');
+  document.getElementById('impact-head').innerHTML = `<tr><th>City</th>${IMPACT_KPIS.map(([key, , text]) => `<th>${escapeHtml(label(key, text))}</th>`).join('')}</tr>`;
+  const row = (name, e, s) => `<tr><td>${name}</td>${IMPACT_KPIS.map(([key, section]) => `<td>${rupees((section === 'evaluation' ? e : s)[key])}</td>`).join('')}</tr>`;
+  document.getElementById('impact-body').innerHTML = Object.keys(ev.by_city).map(city => row(escapeHtml(city), ev.by_city[city], sv.by_city[city])).join('') + row('<strong>Total</strong>', ev.total, sv.total);
+  document.getElementById('impact-scope').textContent = '· estimated, per city';
+  document.getElementById('impact-caption').textContent = `${ev.label}: tracked products, ${ev.total.cycles.toLocaleString('en-IN')} delivery cycles (each counted once, on its first day), the same delivery-aware rule as the risk report on the forecast (flagged) and on true demand (actual): ${ev.total.stockout_caught_cycles} stockouts caught, ${ev.total.stockout_missed_cycles} missed, ${ev.total.false_alarm_cycles} false alarms, ${ev.total.overstock_caught_cycles} overstocks caught. ${sv.label}: ${sv.total.stockout_products} stockout product(s) today; ${sv.total.order_now_products.toLocaleString('en-IN')} ${sv.festival} “Order now” products (${sv.total.order_now_without_mrp} without an MRP count as ₹0). Values at MRP (selling price), not margin.`;
+}
 async function openProductPanel(sku, city, scope, opener, festival = '') {
   const panel = document.getElementById('product-panel');
   productPanelOpener = opener || productPanelOpener;
@@ -1267,6 +1297,7 @@ async function load() {
   document.getElementById('plan-festival').addEventListener('change', event => { planFestival = event.target.value; readinessState.page = '0'; saveUrlState(); renderFestivalPlanning().catch(error => console.error(error)); renderReadiness().catch(error => console.error(error)); });
   attachReadinessControls();
   renderDriversCard().catch(error => console.error(error));
+  renderImpactCard().catch(error => console.error(error));
   await loadDashboard(selectedRegion);
   regionalData = await (await fetch('/api/regional-intelligence')).json();
   renderRegional();
@@ -1504,6 +1535,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
                 return
             self.send_json(200, payload)
+            return
+        if path == "/api/impact":
+            try:
+                self.send_json(200, json.loads(impact.SUMMARY_PATH.read_text()))
+            except FileNotFoundError:
+                self.send_json(503, {"error": "impact_summary.json not generated; run run_pipeline.py"})
             return
         if path in {"/api/explain", "/api/explain/importance"}:
             params = {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()}
