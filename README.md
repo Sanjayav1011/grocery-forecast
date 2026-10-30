@@ -282,47 +282,57 @@ URL state: `plan`, `plan_rank`, and `product_festival` for the panel note.
 ### Festival readiness (admin)
 
 "<Festival> readiness" (Diwali at the serving date) applies to the festival
-picked under Festival planning. For every product in the city (one row per
-product), it checks whether the stock on hand plus the regular deliveries
-before the festival week cover the festival-week demand
+picked under Festival planning. It works as a **top-up above normal
+orders**, the way stores plan festivals. For every product in the city (one
+row per product), it asks how much extra must be ordered, on top of the
+regular deliveries, to cover the festival-week demand
 (`src/festival_readiness.py`). The stock is counted on 30 Oct, the morning
 after the serving date.
 
 - **Festival-week demand:** the festival-planning estimate, 7-day forecast ×
   the category's measured uplift. The festival week is the 7 days ending on
   the festival.
-- **Available by the festival week:** stock on hand, minus forecast demand
-  before the festival week, plus the regular deliveries that arrive before
-  it. Regular deliveries follow the existing cycle (next delivery in
+- **Regular deliveries:** they follow the existing cycle (next delivery in
   `days_until_delivery`, then every `inventory.review_days_for` days), and
-  each brings one cycle of forecast demand. Demand before the week is taken
-  from the oldest stock first. Only stock still within shelf life on the
-  festival day counts. A batch delivered on day t keeps until t + shelf life
-  − 1, and the stock on hand came with the last delivery. Perishables (dairy
-  3 days, sweets 4) therefore rarely carry stock into Diwali.
-- **Shortfall:** festival-week demand − available, if positive.
+  each brings one cycle of normal forecast demand, as the replenishment
+  policy does.
+- **Usable at the start of the week:** stock on hand, minus forecast demand
+  before the week (oldest stock first), plus the regular deliveries before
+  the week. It counts only if still within shelf life on the festival day.
+  A batch delivered on day t keeps until t + shelf life − 1, and the stock
+  on hand came with the last delivery.
+- **Available:** usable at the start of the week + the regular deliveries
+  during the festival week, which count in full. Each is one cycle of
+  demand, sold within its cycle (never longer than the shelf life).
+  Perishables carry little into the week, but still get their in-week
+  deliveries.
+- **Shortfall:** festival-week demand − available. A shortfall under
+  max(5 units, 10% of festival-week demand) is ignored and counts as "Ready".
 - **Order-by date:** the last regular delivery that arrives before the
   festival, minus the 7-day order lead time.
 - **Status:**
   - "Order now": a shortfall, and that delivery arrives within 7 days of the
     serving date, so its order-by date has come.
-  - "At risk": a shortfall otherwise.
-  - "Ready": no shortfall.
-- **Suggested order:** shortfall + 2 days of festival demand
-  (`SAFETY_STOCK_DAYS`).
+  - "At risk": a shortfall otherwise, for example when no delivery arrives
+    before the festival or the last one is more than 7 days out.
+  - "Ready": no shortfall, or a small gap.
+- **Extra order (above regular):** the quantity on top of the regular
+  orders, shortfall + 2 days of festival demand (`SAFETY_STOCK_DAYS`).
+- **Value at risk:** shortfall × MRP.
 
 The table has city tabs, filters for status, category and brand, sortable
-stock / demand / shortfall / order-by / suggested-order columns and a CSV
-download. It is labelled "Planning estimate · stock simulated". The KPI
-row shows the "order now" count, with at-risk and ready under it. URL state
-is `ready_status`, `ready_category`, `ready_brand`, `ready_sort` and
+stock / demand / shortfall / order-by / extra-order columns, an "Available
+(stock + regular deliveries)" column and a CSV download. It is labelled
+"Planning estimate · stock simulated · top-up above regular orders". The
+KPI row shows the "order now" count, with at-risk and ready under it. URL
+state is `ready_status`, `ready_category`, `ready_brand`, `ready_sort` and
 `ready_order`.
 
-Only deliveries before the festival week count, so the shortfall is the
-whole festival-week requirement not already on the shelf. The suggested
-order stands in for the regular deliveries during that week, not on top of
-them. With uplifts of ×1.2–3, most products come out short: at the serving
-date, about 58% of products per city are "Order now".
+At the serving date (Diwali, 8 Nov), 8–12% of products per city are "Order
+now": 4,011 in Bengaluru, 4,288 in Chennai, 5,913 in Delhi and 5,137 in
+Mumbai. "At risk" is 66–75 per city. Snacks make up most "Order now" rows
+and most of the value at risk. Sweets (×2.7–3.0 at Diwali) have the
+highest share at 51%. Personal care (×1.2) is covered by regular orders.
 
 ```
 GET /api/readiness?city=&festival=&status=&category=&brand=&sort=stock|demand|shortfall|order_by|suggested
@@ -343,9 +353,12 @@ summary counts, a STOCKOUT table sorted by days of cover (top 25), an
 OVERSTOCK table (top 15), and every row of the city's list attached as CSV.
 When a festival with measured uplifts is within 21 days of the serving
 date, the email also has a "Festival readiness: <festival> – order now"
-section: the top 25 "Order now" rows by shortfall, with the planning-estimate
-note and the same category routing as the risk rows. At the serving date,
-that festival is Diwali.
+section. It lists the top 25 "Order now" rows by value at risk (shortfall ×
+MRP), with stock, festival-week demand, shortfall, value at risk, order-by
+date and "Extra order (above regular)". It carries the planning-estimate
+note, uses the same category routing as the risk rows, and ends with "+N
+more … on the admin dashboard". At the serving date, that festival is
+Diwali.
 
 ```bash
 python -m src.alerts --city all                      # dry run: outputs/alerts/<date>_<city>.html/.csv

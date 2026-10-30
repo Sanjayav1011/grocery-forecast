@@ -200,11 +200,18 @@ def overstock_cells(row):
 
 
 def readiness_cells(row):
-    return [product(row), row["model_category"], f"{row['opening_stock']:.0f}", f"{row['festival_week_units']:.0f}",
-            f"{row['shortfall']:.0f}", f"{row['order_by']:%Y-%m-%d}", f"{row['suggested_order']:.0f}"]
+    value = row.get("value_at_risk")
+    return [product(row), row["model_category"], f"{row['opening_stock']:,.0f}", f"{row['festival_week_units']:,.0f}",
+            f"{row['shortfall']:,.0f}", "–" if pd.isna(value) else f"₹{value:,.0f}", f"{row['order_by']:%Y-%m-%d}",
+            f"{row['extra_order']:,.0f}"]
 
 
-READINESS_HEADERS = ["Product", "Category", "Stock", "Festival-week demand", "Shortfall", "Order by", "Suggested order"]
+READINESS_HEADERS = ["Product", "Category", "Stock", "Festival-week demand", "Shortfall", "Value at risk", "Order by",
+                     "Extra order (above regular)"]
+
+
+def readiness_more(readiness):
+    return f"more 'Order now' products in {readiness['festival']} readiness on the admin dashboard."
 
 
 def readiness_title(readiness):
@@ -214,8 +221,9 @@ def readiness_title(readiness):
 def readiness_note(readiness):
     return (f"{readiness['festival']} is in {readiness['days_until']} days. Planning estimate, stock simulated: "
             "festival-week demand = 7-day forecast x the category's festival uplift (past years); shortfall = demand "
-            "not covered by stock on hand and regular deliveries before the festival week. Suggested order = "
-            "shortfall + 2 days of festival demand.")
+            "not covered by usable stock at the start of the festival week plus the regular deliveries during it. "
+            "Extra order = the quantity on top of regular orders: shortfall + 2 days of festival demand. "
+            "Ranked by value at risk (shortfall x MRP).")
 
 
 STOCKOUT_HEADERS = ["Product", "Category", "Stock", "7-day forecast", "Days of cover", "Days to next delivery",
@@ -228,16 +236,16 @@ CELL = "padding:6px 8px;border:1px solid #dce8dc;font-size:13px;"
 HEAD = CELL + "background:#f0f6f0;color:#173b28;text-align:left;"
 
 
-def html_table(title, color, headers, rows, cell_fn, cap):
+def html_table(title, color, headers, rows, cell_fn, cap, more="more in the attached CSV."):
     if rows.empty:
         return f'<h3 style="color:{color};font-size:15px;margin:20px 0 6px;">{title}</h3><p style="font-size:13px;">None.</p>'
     head = "".join(f'<th style="{HEAD}">{html.escape(h)}</th>' for h in headers)
     body = "".join(
         "<tr>" + "".join(f'<td style="{CELL}">{html.escape(str(value))}</td>' for value in cell_fn(row)) + "</tr>"
         for _, row in rows.head(cap).iterrows())
-    more = (f'<p style="font-size:13px;color:#66806f;">+{len(rows) - cap} more in the attached CSV.</p>'
+    more = (f'<p style="font-size:13px;color:#66806f;">+{len(rows) - cap:,} {html.escape(more)}</p>'
             if len(rows) > cap else "")
-    return (f'<h3 style="color:{color};font-size:15px;margin:20px 0 6px;">{title} ({len(rows)})</h3>'
+    return (f'<h3 style="color:{color};font-size:15px;margin:20px 0 6px;">{title} ({len(rows):,})</h3>'
             f'<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">'
             f"<tr>{head}</tr>{body}</table>{more}")
 
@@ -260,19 +268,19 @@ def render_html(city, date, stockout, overstock, readiness=None):
         + ("" if readiness is None else
            f'<p style="font-size:13px;color:#66806f;margin:20px 0 0;">{html.escape(readiness_note(readiness))}</p>'
            + html_table(html.escape(readiness_title(readiness)), "#1f8f4d", READINESS_HEADERS, readiness["rows"],
-                        readiness_cells, READINESS_CAP))
+                        readiness_cells, READINESS_CAP, readiness_more(readiness)))
         + f'<p style="font-size:12px;color:#888888;margin-top:24px;border-top:1px solid #dce8dc;padding-top:10px;">'
         f"{html.escape(FOOTER)}</p></div></body></html>")
 
 
-def text_table(title, headers, rows, cell_fn, cap):
-    lines = [f"{title} ({len(rows)})"]
+def text_table(title, headers, rows, cell_fn, cap, more="more in the attached CSV."):
+    lines = [f"{title} ({len(rows):,})"]
     if rows.empty:
         return lines + ["  None.", ""]
     lines.append("  " + " | ".join(headers))
     lines += ["  " + " | ".join(cell_fn(row)) for _, row in rows.head(cap).iterrows()]
     if len(rows) > cap:
-        lines.append(f"  +{len(rows) - cap} more in the attached CSV.")
+        lines.append(f"  +{len(rows) - cap:,} {more}")
     return lines + [""]
 
 
@@ -284,7 +292,8 @@ def render_text(city, date, stockout, overstock, readiness=None):
     lines += text_table("OVERSTOCK", OVERSTOCK_HEADERS, overstock, overstock_cells, OVERSTOCK_CAP)
     if readiness is not None:
         lines += [readiness_note(readiness), ""]
-        lines += text_table(readiness_title(readiness), READINESS_HEADERS, readiness["rows"], readiness_cells, READINESS_CAP)
+        lines += text_table(readiness_title(readiness), READINESS_HEADERS, readiness["rows"], readiness_cells, READINESS_CAP,
+                            readiness_more(readiness))
     return "\n".join(lines + ["--", FOOTER])
 
 

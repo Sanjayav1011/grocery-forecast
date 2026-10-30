@@ -1082,7 +1082,7 @@ document.getElementById('product-panel-close').addEventListener('click', closePr
 const READY_FILTERS = ['status', 'category', 'brand', 'sort', 'order', 'page'];
 const readinessState = {status: '', category: '', brand: '', sort: '', order: '', page: '0'};
 let readinessRequest = 0;
-const READY_COLUMNS = [['Product'], ['Brand'], ['Category'], ['Current stock', 'stock'], ['Festival-week demand', 'demand'], ['Shortfall', 'shortfall'], ['Order by', 'order_by'], ['Suggested order', 'suggested'], ['Status']];
+const READY_COLUMNS = [['Product'], ['Brand'], ['Category'], ['Current stock', 'stock'], ['Festival-week demand', 'demand'], ['Available (stock + regular deliveries)'], ['Shortfall', 'shortfall'], ['Order by', 'order_by'], ['Extra order (above regular)', 'extra'], ['Status']];
 const STATUS_CLASS = {'Order now': 'cover', 'At risk': 'cover high', 'Ready': 'safe'};
 function readinessQuery(extra = {}) {
   const query = new URLSearchParams({city: selectedRegion, festival: planFestival});
@@ -1098,7 +1098,7 @@ async function renderReadiness() {
   const r = await response.json();
   if (request !== readinessRequest) return;
   const body = document.getElementById('ready-body');
-  if (!response.ok) { body.innerHTML = `<tr><td class="empty" colspan="9">${escapeHtml(r.error || 'Unable to load readiness')}</td></tr>`; return; }
+  if (!response.ok) { body.innerHTML = `<tr><td class="empty" colspan="10">${escapeHtml(r.error || 'Unable to load readiness')}</td></tr>`; return; }
   const weekStart = addDays(isoDay(r.date), -6);
   document.getElementById('ready-title').textContent = `${r.festival} readiness (${shortDate(r.date)}, in ${r.days_until} days)`;
   document.getElementById('readiness-kpi').innerHTML = `<span>${escapeHtml(r.festival)} readiness · order now</span><strong style="color:var(--red)">${r.counts['Order now'].toLocaleString()}</strong><small class="metric-note">${r.counts['At risk'].toLocaleString()} at risk · ${r.counts.Ready.toLocaleString()} ready · planning estimate</small>`;
@@ -1111,7 +1111,7 @@ async function renderReadiness() {
   if (document.activeElement !== document.getElementById('ready-brand')) document.getElementById('ready-brand').value = readinessState.brand;
   document.getElementById('ready-count').textContent = `${r.total.toLocaleString()} of ${r.products.toLocaleString()} products`;
   document.getElementById('ready-download').href = `/api/readiness?${readinessQuery({format: 'csv'})}`;
-  document.getElementById('ready-caption').textContent = `Planning estimate · stock simulated. Festival-week demand (${shortDate(weekStart)}–${shortDate(r.date)}) = 7-day forecast × the category's ${r.festival} uplift in ${r.city} (measured on past years). Available = stock on ${shortDate(r.stock_date)} − forecast demand before the festival week + regular deliveries arriving before then; perishables count only stock still within shelf life on ${shortDate(r.date)}. Shortfall = demand − available. Order now: a shortfall, and the last delivery before the festival arrives within 7 days (orders take 7 days). Suggested order = shortfall + 2 days of festival demand.`;
+  document.getElementById('ready-caption').textContent = `Planning estimate · stock simulated · top-up above regular orders. Festival-week demand (${shortDate(weekStart)}–${shortDate(r.date)}) = 7-day forecast × the category's ${r.festival} uplift in ${r.city} (measured on past years). Available = stock still usable at the start of the festival week (stock on ${shortDate(r.stock_date)} − forecast demand before the week + regular deliveries before it; perishables only if still within shelf life on ${shortDate(r.date)}) + the regular deliveries during the week, each one cycle of normal demand. Shortfall = demand − available; gaps under max(5 units, 10% of demand) count as Ready. Order now: a shortfall, and the last delivery before the festival arrives within 7 days (orders take 7 days). Extra order = the quantity on top of regular orders: shortfall + 2 days of festival demand.`;
   document.getElementById('ready-head').innerHTML = `<tr>${READY_COLUMNS.map(([label, key]) => {
     if (!key) return `<th>${label}</th>`;
     const arrow = readinessState.sort === key ? ((readinessState.order || (key === 'order_by' ? 'asc' : 'desc')) === 'asc' ? ' ↑' : ' ↓') : '';
@@ -1119,8 +1119,9 @@ async function renderReadiness() {
   }).join('')}</tr>`;
   body.innerHTML = r.rows.map(row => {
     const due = row.order_by && row.status !== 'Ready' ? `${shortDate(row.order_by)}${row.order_by <= r.data_date ? ' (now)' : ''}` : '–';
-    return `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'regional', r.festival)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.category)}</td><td>${fmt(row.opening_stock)}</td><td>${fmt(row.festival_week_units)}</td><td class="${row.shortfall > 0 ? 'risk' : ''}">${row.shortfall > 0 ? fmt(row.shortfall) : '–'}</td><td>${due}</td><td>${row.suggested_order ? fmt(row.suggested_order) : '–'}</td><td><span class="${STATUS_CLASS[row.status]}">${escapeHtml(row.status)}</span></td></tr>`;
-  }).join('') || `<tr><td class="empty" colspan="9">No products match these filters</td></tr>`;
+    const gap = row.status === 'Ready' ? (row.shortfall > 0 ? `<span class="subhead" title="below max(5 units, 10% of demand)">small gap ${fmt(row.shortfall)}</span>` : '–') : fmt(row.shortfall);
+    return `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'regional', r.festival)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.category)}</td><td>${fmt(row.opening_stock)}</td><td>${fmt(row.festival_week_units)}</td><td title="usable at week start ${fmt(row.usable_at_week_start)} + regular deliveries in the week ${fmt(row.week_deliveries)}">${fmt(row.available)}</td><td class="${row.status !== 'Ready' ? 'risk' : ''}">${gap}</td><td>${due}</td><td>${row.extra_order ? fmt(row.extra_order) : '–'}</td><td><span class="${STATUS_CLASS[row.status]}">${escapeHtml(row.status)}</span></td></tr>`;
+  }).join('') || `<tr><td class="empty" colspan="10">No products match these filters</td></tr>`;
   const pageCount = Math.max(1, Math.ceil(r.total / STOCKOUT_PAGE_SIZE));
   document.getElementById('ready-page').textContent = r.total ? `Products ${offset + 1}-${Math.min(offset + STOCKOUT_PAGE_SIZE, r.total)} of ${r.total.toLocaleString()}` : 'No products';
   document.getElementById('ready-prev').disabled = Number(readinessState.page) === 0;
