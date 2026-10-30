@@ -24,6 +24,7 @@ import pandas as pd
 import pytest
 
 import dashboard
+import festival_uplift
 import product_detail
 import stockout_view
 
@@ -41,6 +42,9 @@ PRODUCTS = [
     ("A4", "Delhi", "AMUL Kool Cafe, 200 ml", "Amul", "beverages", 40.0, 99.0, 0.5, ANALOG, "stockout"),
     ("T1", "Mumbai", "Amul Lassi 200 ml", "Amul", "dairy", 25.0, 9.0, 4.0, DIRECT, "normal"),
 ]
+# per-day shape of the tracked forecasts (mean 1): T2 falls, the rest rise
+RISING = [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3]
+FALLING = RISING[::-1]
 DAILY_SALES = {("Delhi", "T1"): (10, 5), ("Delhi", "T2"): (20, 20), ("Delhi", "T3"): (15, 30),
                ("Delhi", "T4"): (2, 2), ("Mumbai", "T1"): (7, 7)}  # (last 28 days, the 28 before)
 
@@ -50,7 +54,7 @@ def fake_data(tmp_path, monkeypatch):
     inventory = pd.DataFrame([{
         "region": city, "sku_id": sku, "product_name": name, "brand": brand, "pack_size_value": "200.0",
         "pack_size_unit": "ml", "category": category, "subcategory": "", "price": price, "forecast_daily": daily,
-        "forecast_units": daily, "forecast_source": source, "days_of_cover": cover, "days_until_delivery": 2,
+        "forecast_units": daily, "forecast_horizon": daily * 7, "model_category": category, "forecast_source": source, "days_of_cover": cover, "days_until_delivery": 2,
         "reorder_qty": int(daily * 9), "risk_status": risk, "opening_stock": round(daily * cover),
         "analog_ids": "" if source == DIRECT else "T1;T2;T3;T4;T1",
         "analog_weights": "" if source == DIRECT else "0.4;0.3;0.1;0.1;0.1",
@@ -59,6 +63,14 @@ def fake_data(tmp_path, monkeypatch):
     inventory.to_csv(tmp_path / "bigbasket_regional_inventory.csv", index=False)
     pd.DataFrame({"forecast_start": [PLANNING_DAY.date().isoformat()]}).to_csv(
         tmp_path / "bigbasket_regional_forecast.csv", index=False)
+    pd.DataFrame([{"sku_id": sku, "city": city, "date": (PLANNING_DAY + pd.Timedelta(days=d)).date().isoformat(),
+                   "prediction": daily * (FALLING if sku == "T2" else RISING)[d]}
+                  for sku, city, _, _, _, _, daily, _, source, _ in PRODUCTS if source == DIRECT for d in range(7)]).to_csv(
+        tmp_path / "bigbasket_tracked_daily_forecast.csv", index=False)
+    pd.DataFrame([("Diwali", city, category, uplift, 5, 2021, 2025) for city in ["Delhi", "Mumbai"]
+                  for category, uplift in [("sweets", 3.0), ("snacks", 1.5), ("dairy", 2.0)]],
+                 columns=["festival", "city", "category", "uplift", "occurrences", "first_year", "last_year"]).to_csv(
+        tmp_path / "festival_uplift.csv", index=False)
     pos = [{"date": (PLANNING_DAY - pd.Timedelta(days=age)).date().isoformat(), "city": city, "sku_id": sku,
             "units_sold": recent if age <= 28 else previous, "true_demand": (recent if age <= 28 else previous) + 0.5,
             "stockout_flag": int(age == 10)}
@@ -66,8 +78,10 @@ def fake_data(tmp_path, monkeypatch):
     pd.DataFrame(pos).to_csv(tmp_path / "pos_synthetic.csv", index=False)
     pd.DataFrame({"date": ["2099-01-01"], "next_festival": ["Diwali"], "days_until_next_festival": ["0"]}).to_csv(
         tmp_path / "festival_calendar_5yr.csv", index=False)
-    for module in (stockout_view, dashboard, product_detail):
+    for module in (stockout_view, dashboard, product_detail, festival_uplift):
         monkeypatch.setattr(module, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(dashboard, "OUTPUTS_DIR", tmp_path)
+    festival_uplift._UPLIFTS.clear()
     monkeypatch.setattr(stockout_view, "OUTPUTS_DIR", tmp_path)
     monkeypatch.setattr(dashboard, "REGIONAL_INTELLIGENCE_CACHE", None)
     stockout_view.clear_cache()
@@ -75,6 +89,7 @@ def fake_data(tmp_path, monkeypatch):
     yield tmp_path
     stockout_view.clear_cache()
     product_detail.clear_cache()
+    festival_uplift._UPLIFTS.clear()
 
 
 @pytest.fixture
@@ -191,12 +206,13 @@ def test_occasion_list_ranks_by_units_or_revenue(fake_data):
     [delhi, _] = dashboard.regional_intelligence()
     by_units = [row["sku_id"] for row in delhi["demand"]]
     by_revenue = [row["sku_id"] for row in delhi["demand_by_revenue"]]
-    # the Diwali focus weights every category here x2.5 alike; A4 (99/day) is a
+    # ranked by the plain 7-day forecast (no category boost); A4 (99/day) is a
     # second SKU of A1, so it never shows
     assert by_units[:3] == ["A1", "T2", "T3"] and "A4" not in by_units + by_revenue
-    assert by_revenue[:4] == ["A2", "T3", "T2", "A1"]  # 6 x ₹900, 14 x ₹200, 20 x ₹110, 30 x ₹40
-    assert all(row["revenue_estimate"] == round(float(row["forecast_units"]) * float(row["price"]), 2)
+    assert by_revenue[:4] == ["A2", "T3", "T2", "A1"]  # 7 x (6 x ₹900, 14 x ₹200, 20 x ₹110, 30 x ₹40)
+    assert all(row["revenue_estimate"] == round(row["forecast_7d"] * float(row["price"]), 2)
                for row in delhi["demand_by_revenue"])
+    assert delhi["demand"][0]["forecast_7d"] == 210.0
     assert len(by_revenue) == len({dashboard.product_key(row) for row in delhi["demand_by_revenue"]})
 
 

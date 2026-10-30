@@ -5,8 +5,8 @@ Runs the whole pipeline in order with the current Python interpreter,
 stopping at the first failing step, and prints how long each step took:
 
   import_archive_products -> festival_calendar -> generate_synthetic_data ->
-  build_features -> train_model --trials 0 -> forecast_regional ->
-  build_bigbasket_regional_risk
+  build_features -> festival_uplift -> train_model --trials 0 ->
+  forecast_regional -> build_bigbasket_regional_risk
 
 train_model runs with --trials 0, i.e. it reuses the tuned parameters in
 models/params_<segment>.json; run src/train_model.py --trials N to re-tune.
@@ -27,6 +27,7 @@ STEPS = [
     ["festival_calendar.py"],
     ["generate_synthetic_data.py"],
     ["build_features.py"],
+    ["festival_uplift.py"],
     ["train_model.py", "--trials", "0"],
     ["forecast_regional.py"],
     ["build_bigbasket_regional_risk.py"],

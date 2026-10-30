@@ -138,7 +138,7 @@ def regional_rows():
     inventory = pd.read_csv(
         DATA_DIR / "bigbasket_regional_inventory.csv", dtype={"pack_size_value": str},
         usecols=["region", "sku_id", "product_name", "brand", "pack_size_value", "pack_size_unit", "category",
-                 "price", "forecast_daily", "forecast_source", "analog_ids", "analog_weights", "analog_price_adj",
+                 "model_category", "price", "forecast_daily", "forecast_source", "analog_ids", "analog_weights", "analog_price_adj",
                  "opening_stock", "days_of_cover", "days_until_delivery", "reorder_qty", "risk_status"])
     # stock is simulated for the morning of the first forecast day
     start = pd.read_csv(DATA_DIR / "bigbasket_regional_forecast.csv", usecols=["forecast_start"], nrows=1)

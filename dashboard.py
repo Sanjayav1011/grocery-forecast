@@ -5,14 +5,15 @@ import re
 import sys
 import threading
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR
+from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR, LEAD_TIME_DAYS
+import festival_uplift
 import product_detail
 import stockout_view
 from stockout_view import product_key, unique_products  # noqa: F401  (product_key kept for callers)
@@ -57,11 +58,31 @@ def dataset_preview(name, offset, limit):
     return rows
 
 
-def next_festival(occasions):
-    # Rows with days_until_next_festival == 0 are the festival days themselves.
-    today = date.today().isoformat()
-    upcoming = [row for row in occasions if row["date"] >= today and row["days_until_next_festival"] == "0"]
-    return min(upcoming, key=lambda row: row["date"]) if upcoming else None
+def data_date():
+    """
+    The last day of sales data (the day the regional forecast was made from).
+    Every date on the admin page counts from it, never the computer's clock.
+    """
+    path = DATA_DIR / "bigbasket_regional_forecast.csv"
+    if path.exists():
+        with path.open(newline="", encoding="utf-8") as file:
+            first = next(csv.DictReader(file), None)
+        if first:
+            return date.fromisoformat(first["forecast_start"]) - timedelta(days=1)
+    report = OUTPUTS_DIR / "stockout_risk_report.csv"
+    if report.exists():
+        return date.fromisoformat(max(row["date"] for row in read_csv_from_path(report)))
+    return None
+
+
+def next_festival(occasions, today):
+    """The first festival on or after `today` (rows with days_until_next_festival == 0 are festival days)."""
+    if today is None:
+        return None
+    upcoming = [row for row in occasions if row["date"] >= today.isoformat() and row["days_until_next_festival"] == "0"]
+    festival = min(upcoming, key=lambda row: row["date"]) if upcoming else None
+    return festival and {"name": festival["next_festival"], "date": festival["date"],
+                         "days_until": (date.fromisoformat(festival["date"]) - today).days}
 
 
 def not_forecast_count():
@@ -74,22 +95,9 @@ def regional_intelligence():
     if REGIONAL_INTELLIGENCE_CACHE is not None:
         return REGIONAL_INTELLIGENCE_CACHE
     rows = read_csv_from_path(DATA_DIR / "bigbasket_regional_inventory.csv")
-    occasions = read_csv_from_path(DATA_DIR / "festival_calendar_5yr.csv")
-    occasion = next_festival(occasions) or occasions[-1]
-    days_until = (date.fromisoformat(occasion["date"]) - date.today()).days
-    occasion_name = occasion["next_festival"].lower()
-    if date.today().month == 5:
-        focus_label = "school start"
-        focus_categories = ["book", "stationery", "beverage", "snack", "fruit", "vegetable", "dairy", "milk"]
-    elif any(word in occasion_name for word in ["diwali", "ganesh", "mahalaya", "dussehra", "navratri", "holi"]):
-        focus_label = occasion["next_festival"]
-        focus_categories = ["sweet", "fruit", "beverage", "dairy", "milk", "snack"]
-    elif any(word in occasion_name for word in ["christmas", "new year", "eid"]):
-        focus_label = occasion["next_festival"]
-        focus_categories = ["beverage", "snack", "sweet", "fruit", "dairy", "milk"]
-    else:
-        focus_label = occasion["next_festival"]
-        focus_categories = ["fruit", "vegetable", "dairy", "milk", "beverage", "sweet"]
+    today = data_date()
+    festival = next_festival(read_csv_from_path(DATA_DIR / "festival_calendar_5yr.csv"), today)
+    window = [(today + timedelta(days=offset)).isoformat() if today else None for offset in (1, LEAD_TIME_DAYS)]
     result = []
     excluded = not_forecast_count()
     for region in sorted({row["region"] for row in rows}):
@@ -97,15 +105,15 @@ def regional_intelligence():
         stockout = sorted((row for row in region_rows if row["risk_status"] == "stockout"), key=lambda row: float(row["days_of_cover"]))[:10]
         overstock = sorted((row for row in region_rows if row["risk_status"] == "overstock"), key=lambda row: float(row["days_of_cover"]), reverse=True)[:10]
         for row in region_rows:
-            product_text = " ".join([row.get("category", ""), row.get("subcategory", ""), row.get("product_name", "")]).lower()
-            row["occasion_demand_score"] = float(row["forecast_units"]) * (2.5 if any(category in product_text for category in focus_categories) else 0.5)
+            # the next 7 days of forecast, as forecast_regional saved it (forecast_daily x 7)
+            row["forecast_7d"] = float(row["forecast_horizon"])
             price = float(row["price"]) if row.get("price") else None
-            row["revenue_estimate"] = round(float(row["forecast_units"]) * price, 2) if price else None
+            row["revenue_estimate"] = round(row["forecast_7d"] * price, 2) if price else None
         products = unique_products(region_rows)
-        demand = sorted(products, key=lambda row: row["occasion_demand_score"], reverse=True)[:10]
-        # revenue = forecast units x MRP, with the same occasion focus weighting; products without an MRP can't rank
+        demand = sorted(products, key=lambda row: row["forecast_7d"], reverse=True)[:10]
+        # revenue = 7-day forecast units x MRP; products without an MRP can't rank
         demand_by_revenue = sorted((row for row in products if row["revenue_estimate"] is not None),
-                                   key=lambda row: row["occasion_demand_score"] * float(row["price"]), reverse=True)[:10]
+                                   key=lambda row: row["revenue_estimate"], reverse=True)[:10]
         for row in stockout:
             row["recommended_restock_units"] = int(row["reorder_qty"])  # shared rule, inventory.classify_risk
         result.append({
@@ -113,11 +121,10 @@ def regional_intelligence():
             "sku_count": len(region_rows),
             "stockout_count": sum(row["risk_status"] == "stockout" for row in region_rows),
             "overstock_count": sum(row["risk_status"] == "overstock" for row in region_rows),
-            "occasion": occasion["next_festival"],
-            "occasion_date": occasion["date"],
-            "days_until_occasion": days_until,
-            "demand_focus": focus_label,
-            "focus_categories": focus_categories,
+            "data_date": today.isoformat() if today else None,
+            "window_start": window[0],
+            "window_end": window[1],
+            "next_festival": festival,
             "stockout": stockout,
             "overstock": overstock,
             "demand": demand,
@@ -127,6 +134,27 @@ def regional_intelligence():
         })
     REGIONAL_INTELLIGENCE_CACHE = result
     return result
+
+
+def dashboard_payload(city):
+    """/api/dashboard: today's model risk rows (all cities or one), the next festival and the KPIs."""
+    city = city.strip().casefold()
+    stockout = read_csv("stockout_risk_report.csv")
+    overstock = read_csv("overstock_risk_report.csv")
+    # Reports cover every day of the test window; "today" is the latest date.
+    latest = max((row["date"] for row in stockout + overstock), default=None)
+    stockout = [row for row in stockout if row["date"] == latest]
+    overstock = [row for row in overstock if row["date"] == latest]
+    if city and city != "all":
+        stockout = [row for row in stockout if row["city"].casefold() == city]
+        overstock = [row for row in overstock if row["city"].casefold() == city]
+    today = data_date()
+    return {
+        "metrics": read_json("metrics.json"), "stockout": stockout, "overstock": overstock,
+        "latest": latest, "data_date": today.isoformat() if today else None,
+        "next_festival": next_festival(read_csv_from_path(DATA_DIR / "festival_calendar_5yr.csv"), today),
+        "city": city or "all", "tracked_products": tracked_product_count(),
+    }
 
 
 def read_csv(filename):
@@ -449,7 +477,7 @@ PAGE = """<!doctype html>
     <nav class="category-menu customer-only" id="category-menu" aria-label="Shop by category"></nav>
     <section class="hero-banner customer-only"><div class="hero-copy"><div class="hero-kicker">Good food, right on time</div><h2>Freshness for every day</h2><p>Find your everyday favourites, handpicked fresh and delivered straight to your door.</p><a class="hero-cta" href="#catalog">Shop groceries <span>→</span></a></div><div class="hero-art"><img id="hero-product-image" alt="Featured product from our catalog"></div></section>
     <section class="service-strip customer-only" aria-label="Shopping benefits"><div class="service-item"><span class="service-icon">🌿</span><div><strong>Freshly picked</strong><span>Quality essentials for your home</span></div></div><div class="service-item"><span class="service-icon">🚚</span><div><strong>Convenient delivery</strong><span>Choose what works for you</span></div></div><div class="service-item"><span class="service-icon">🛍️</span><div><strong>Everyday favourites</strong><span>All your grocery needs in one place</span></div></div></section>
-    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3>Highest demand for the upcoming occasion <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast</th><th>Est. revenue/day</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div></section>
+    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="demand-title">Highest demand — next 7 days</span> <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast (7 days)</th><th>Est. revenue (7 days)</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="plan-title">Festival planning</span> <span class="rank-toggle" id="plan-rank-toggle"></span></h3><div class="view-toolbar"><select id="plan-festival" aria-label="Festival"></select><span class="view-count" id="plan-uplifts"></span></div><div class="view-caption" id="plan-caption"></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>7-day forecast</th><th>Uplift (category)</th><th>Festival-week units</th><th>Est. revenue</th><th>Category</th></tr></thead><tbody id="plan-body"></tbody></table></div></div></section>
   <div class="summary admin-only" id="summary"></div>
     <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
     <div class="section-eyebrow customer-only">Picked for your kitchen</div><div class="catalog-head customer-only"><h2>Shop groceries <span id="catalog-count" class="subhead"></span></h2><div class="subhead">Fresh picks for every day</div></div>
@@ -655,7 +683,45 @@ function renderCategories() {
     document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' });
   }));
 }
-function renderRegional() { const region = regionalData.find(item => item.region === selectedRegion) || regionalData[0]; if (!region) return; selectedRegion = region.region; document.getElementById('region-tabs').innerHTML = regionalData.map(item => `<button class="region-tab ${item.region === selectedRegion ? 'active' : ''}" data-region="${item.region}">${item.region}</button>`).join(''); document.querySelectorAll('.region-tab').forEach(button => button.addEventListener('click', () => { selectedRegion = button.dataset.region; renderRegional(); refreshStockoutViews(); loadDashboard(selectedRegion).catch(error => console.error(error)); })); document.getElementById('rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${rankBy === key ? 'active' : ''}" data-rank="${key}">${label}</button>`).join('')}`; document.querySelectorAll('[data-rank]').forEach(button => button.addEventListener('click', () => { rankBy = button.dataset.rank; saveUrlState(); renderRegional(); })); document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Planning window</span><strong>${region.days_until_occasion} days</strong></div>`; document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`; document.getElementById('occasion').textContent = `Upcoming occasion: ${region.occasion} on ${region.occasion_date}. Demand focus: ${region.demand_focus} (${region.focus_categories.join(', ')}).`; document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`; document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td>${row.forecast_units} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); }
+function renderRegional() {
+  const region = regionalData.find(item => item.region === selectedRegion) || regionalData[0];
+  if (!region) return;
+  selectedRegion = region.region;
+  document.getElementById('region-tabs').innerHTML = regionalData.map(item => `<button class="region-tab ${item.region === selectedRegion ? 'active' : ''}" data-region="${item.region}">${item.region}</button>`).join('');
+  document.querySelectorAll('.region-tab').forEach(button => button.addEventListener('click', () => { selectedRegion = button.dataset.region; renderRegional(); refreshStockoutViews(); loadDashboard(selectedRegion).catch(error => console.error(error)); }));
+  document.getElementById('rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${rankBy === key ? 'active' : ''}" data-rank="${key}">${label}</button>`).join('')}`;
+  document.querySelectorAll('[data-rank]').forEach(button => button.addEventListener('click', () => { rankBy = button.dataset.rank; saveUrlState(); renderRegional(); }));
+  const festival = region.next_festival;
+  document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Next festival</span><strong>${festival ? `${escapeHtml(festival.name)} · ${festival.days_until}d` : 'None scheduled'}</strong></div>`;
+  document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`;
+  const windowLabel = `${shortDate(region.window_start)}–${shortDate(region.window_end)}`;
+  const inWindow = festival && festival.date <= region.window_end;
+  document.getElementById('occasion').textContent = `Data as of ${longDate(region.data_date)}. The forecast covers the next 7 days, ${windowLabel}${inWindow ? `, which include ${festival.name} (${shortDate(festival.date)})` : ''}${festival && !inWindow ? `; the next festival is ${festival.name} on ${shortDate(festival.date)}` : ''}. Festivals further ahead are under Festival planning.`;
+  document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`;
+  document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join('');
+  document.getElementById('demand-title').textContent = `Highest demand — next 7 days (${windowLabel})`;
+  document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td>${fmt(row.forecast_7d)} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join('');
+  renderFestivalPlanning().catch(error => console.error(error));
+}
+let planFestival = '';
+let planRank = 'units';
+let planRequest = 0;
+async function renderFestivalPlanning() {
+  const request = ++planRequest;
+  const response = await fetch(`/api/festival-planning?${new URLSearchParams({city: selectedRegion, festival: planFestival, rank: planRank})}`);
+  const plan = await response.json();
+  if (request !== planRequest) return;
+  const body = document.getElementById('plan-body');
+  if (!response.ok) { body.innerHTML = `<tr><td class="empty" colspan="6">${escapeHtml(plan.error || 'Unable to load festival planning')}</td></tr>`; return; }
+  document.getElementById('plan-title').textContent = `Festival planning: ${plan.festival} (${shortDate(plan.date)}, in ${plan.days_until} days)`;
+  document.getElementById('plan-festival').innerHTML = plan.options.map(option => `<option value="${escapeHtml(option.festival)}" ${option.has_uplift ? '' : 'disabled'} ${option.festival === plan.festival ? 'selected' : ''}>${escapeHtml(option.festival)} · ${shortDate(option.date)}${option.has_uplift ? '' : ' (no past years to measure)'}</option>`).join('');
+  document.getElementById('plan-rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${planRank === key ? 'active' : ''}" data-plan-rank="${key}">${label}</button>`).join('')}`;
+  document.querySelectorAll('[data-plan-rank]').forEach(button => button.addEventListener('click', () => { planRank = button.dataset.planRank; saveUrlState(); renderFestivalPlanning(); }));
+  const years = plan.uplifts.length ? `${Math.min(...plan.uplifts.map(u => u.first_year))}–${Math.max(...plan.uplifts.map(u => u.last_year))}` : '';
+  document.getElementById('plan-uplifts').textContent = plan.uplifts.map(u => `${u.category} ×${u.uplift.toFixed(1)}`).join(' · ') + (plan.uplifts.length ? ` at ${plan.festival} in ${plan.city}` : '');
+  document.getElementById('plan-caption').textContent = `Planning estimate, not a model forecast (the model forecasts 7 days ahead). Festival-week units = the product's current 7-day forecast (${shortDate(plan.window_start)}–${shortDate(plan.window_end)}) × its category's uplift: festival-week demand vs the 4 normal weeks before it, in ${plan.city}, averaged over past ${plan.festival}s (${years}, simulated sales history). Revenue = units × MRP (estimated).`;
+  body.innerHTML = plan.rows.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'regional', plan.festival)}</td><td>${fmt(row.forecast_7d)}</td><td>${escapeHtml(row.model_category)} ×${row.uplift.toFixed(2)}</td><td>${fmt(row.festival_week_units)} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td></tr>`).join('') || `<tr><td class="empty" colspan="6">No measured uplift for ${escapeHtml(plan.festival)} in ${escapeHtml(plan.city)}</td></tr>`;
+}
 const STOCKOUT_KEYS = ['view', 'brand', 'category', 'min_price', 'max_price', 'top', 'trend', 'max_cover', 'source', 'q', 'sort', 'order', 'page'];
 const PRICE_BANDS = {lt50: ['', '49.99'], '50-200': ['50', '200'], '200-500': ['200.01', '500'], gt500: ['500.01', '']};
 const STOCKOUT_PAGE_SIZE = 50;
@@ -666,7 +732,9 @@ function saveUrlState() {
   const params = new URLSearchParams();
   if (selectedRegion) params.set('city', selectedRegion);
   if (rankBy !== 'units') params.set('rank', rankBy);
-  if (openProduct) { params.set('product', openProduct.sku); params.set('product_city', openProduct.city); params.set('product_scope', openProduct.scope); }
+  if (openProduct) { params.set('product', openProduct.sku); params.set('product_city', openProduct.city); params.set('product_scope', openProduct.scope); if (openProduct.festival) params.set('product_festival', openProduct.festival); }
+  if (planFestival) params.set('plan', planFestival);
+  if (planRank !== 'units') params.set('plan_rank', planRank);
   stockoutViews.forEach(view => Object.entries(view.state).forEach(([key, value]) => {
     if (value && !(key === 'page' && value === '0') && !(key === 'view' && value === 'table')) params.set(`${view.prefix}_${key}`, value);
   }));
@@ -677,7 +745,9 @@ function readUrlState() {
   const params = new URLSearchParams(location.search);
   if (params.get('city')) selectedRegion = params.get('city');
   if (params.get('rank') === 'revenue') rankBy = 'revenue';
-  if (params.get('product')) openProduct = {sku: params.get('product'), city: params.get('product_city') || selectedRegion, scope: params.get('product_scope') || 'regional'};
+  if (params.get('product')) openProduct = {sku: params.get('product'), city: params.get('product_city') || selectedRegion, scope: params.get('product_scope') || 'regional', festival: params.get('product_festival') || ''};
+  planFestival = params.get('plan') || '';
+  if (params.get('plan_rank') === 'revenue') planRank = 'revenue';
   return params;
 }
 const fmt = (value, digits = 0) => value == null ? '–' : Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
@@ -815,14 +885,15 @@ const CHART_COLORS = {sold: '#2a78d6', demand: '#eb6834', stockout: '#d94b4b', g
 let productPanelOpener = null;
 const isoDay = iso => new Date(`${iso}T00:00:00`);
 const shortDate = iso => isoDay(iso).toLocaleDateString('en-IN', {day: 'numeric', month: 'short'});
+const longDate = iso => isoDay(iso).toLocaleDateString('en-IN', {day: 'numeric', month: 'short', year: 'numeric'});
 const addDays = (day, count) => { const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + count); return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`; };
 function niceStep(max, count) {
   const raw = max / count;
   const power = 10 ** Math.floor(Math.log10(raw));
   return [1, 2, 2.5, 5, 10].map(multiple => multiple * power).find(step => step >= raw);
 }
-function productLink(name, sku, city, scope) {
-  return `<a href="#" class="product-link" data-sku="${escapeHtml(sku)}" data-city="${escapeHtml(city)}" data-scope="${scope}">${escapeHtml(name || sku)}</a>`;
+function productLink(name, sku, city, scope, festival = '') {
+  return `<a href="#" class="product-link" data-sku="${escapeHtml(sku)}" data-city="${escapeHtml(city)}" data-scope="${scope}" data-festival="${escapeHtml(festival)}">${escapeHtml(name || sku)}</a>`;
 }
 function productChart(product) {
   const W = 540, H = 280, m = {left: 46, right: 16, top: 40, bottom: 26};
@@ -942,7 +1013,7 @@ function renderProductPanel(product) {
   const legend = [
     tracked ? legendItem('Units sold (simulated)', CHART_COLORS.sold) : '',
     tracked ? legendItem('True demand (simulated)', CHART_COLORS.demand, 'dotted') : '',
-    legendItem(tracked ? '7-day forecast' : '7-day forecast (analog average, flat)', CHART_COLORS.demand, 'dashed'),
+    legendItem(tracked ? '7-day forecast' : '7-day forecast (estimated, from 5 analogs)', CHART_COLORS.demand, 'dashed'),
     tracked ? legendItem('Stockout day (simulated)', CHART_COLORS.stockout, 'area') : '',
     legendItem('Stock (simulated)', CHART_COLORS.text), product.festivals.length ? legendItem('Festival', CHART_COLORS.muted) : '',
   ].join('');
@@ -953,20 +1024,26 @@ function renderProductPanel(product) {
   document.getElementById('product-panel-body').innerHTML = `<div class="subhead">${escapeHtml(product.city)} · ${escapeHtml(product.sku_id)} · ${product.scope === 'model' ? 'model risk report' : 'regional report'} · today ${escapeHtml(shortDate(product.today))}</div>
     <div class="product-layout"><div><div class="chart-legend">${legend}</div><div class="chart-box">${chart.svg}<div class="chart-tooltip" hidden></div></div></div>
     <dl class="product-facts">${facts.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join('')}</dl></div>
-    ${analogs}${table}<p class="subhead">${product.notes.map(escapeHtml).join(' ')}</p>`;
+    ${festivalNote(product)}${analogs}${table}<p class="subhead">${product.notes.map(escapeHtml).join(' ')}</p>`;
   attachChartHover(document.querySelector('#product-panel-body .chart-box'), chart, product);
 }
-async function openProductPanel(sku, city, scope, opener) {
+function festivalNote(product) {
+  const plan = product.festival_planning;
+  if (!plan) return '';
+  const fmtNumber = (value, digits = 0) => Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+  return `<div class="occasion" style="margin-top:14px"><strong>Festival planning: ${escapeHtml(plan.festival)} (${shortDate(plan.date)})</strong><br>7-day forecast ${fmtNumber(plan.seven_day_units, 1)} units × ${escapeHtml(plan.category)} uplift ×${plan.uplift.toFixed(2)} = <strong>${fmtNumber(plan.festival_week_units)} units</strong> in the festival week.<br><span class="subhead">Uplift: ${escapeHtml(product.city)} ${escapeHtml(plan.category)} demand in the week ending on ${escapeHtml(plan.festival)} vs the 4 normal weeks before it, averaged over ${plan.occurrences} past years (${plan.first_year}–${plan.last_year}, simulated sales history). Planning estimate, not a model forecast (the model forecasts 7 days ahead).</span></div>`;
+}
+async function openProductPanel(sku, city, scope, opener, festival = '') {
   const panel = document.getElementById('product-panel');
   productPanelOpener = opener || productPanelOpener;
-  openProduct = {sku, city, scope};
+  openProduct = {sku, city, scope, festival};
   saveUrlState();
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
   document.getElementById('product-panel-title').textContent = 'Loading…';
   document.getElementById('product-panel-body').innerHTML = '';
   document.getElementById('product-panel-close').focus();
-  const response = await fetch(`/api/product?${new URLSearchParams({sku_id: sku, city, scope})}`);
+  const response = await fetch(`/api/product?${new URLSearchParams({sku_id: sku, city, scope, festival: festival || ''})}`);
   const payload = await response.json();
   if (!response.ok) { document.getElementById('product-panel-title').textContent = payload.error || 'Unable to load product'; return; }
   renderProductPanel(payload);
@@ -985,7 +1062,7 @@ document.addEventListener('click', event => {
   const link = event.target.closest('.product-link');
   if (!link) return;
   event.preventDefault();
-  openProductPanel(link.dataset.sku, link.dataset.city, link.dataset.scope, link).catch(error => showToast(error.message, true));
+  openProductPanel(link.dataset.sku, link.dataset.city, link.dataset.scope, link, link.dataset.festival).catch(error => showToast(error.message, true));
 });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeProductPanel(); });
 document.getElementById('product-panel-close').addEventListener('click', closeProductPanel);
@@ -1037,7 +1114,8 @@ async function load() {
   createStockoutView('m', 'model', 'model-view', `Tracked products, stock counted on {day}. ${simulated} Trend = last 28 days vs the 28 before.`);
   createStockoutView('r', 'regional', 'regional-view', `Full catalog, stock simulated for {day}. ${simulated} Catalog products without sales history show their forecast instead.`);
   refreshStockoutViews();
-  if (openProduct) openProductPanel(openProduct.sku, openProduct.city, openProduct.scope).catch(error => showToast(error.message, true));
+  if (openProduct) openProductPanel(openProduct.sku, openProduct.city, openProduct.scope, null, openProduct.festival).catch(error => showToast(error.message, true));
+  document.getElementById('plan-festival').addEventListener('change', event => { planFestival = event.target.value; saveUrlState(); renderFestivalPlanning().catch(error => console.error(error)); });
   await loadDashboard(selectedRegion);
   regionalData = await (await fetch('/api/regional-intelligence')).json();
   renderRegional();
@@ -1098,7 +1176,7 @@ async function loadDashboard(city) {
 }
 function renderSummary() {
   const statusEl = document.getElementById('status');
-  if (statusEl) statusEl.textContent = data.latest ? `UPDATED ${data.latest}` : 'NO RISK DATA';
+  if (statusEl) statusEl.textContent = data.data_date ? `Data as of ${longDate(data.data_date)}` : 'NO RISK DATA';
   const festival = data.next_festival;
   const festivalLabel = festival ? `${escapeHtml(festival.name)} · ${festival.days_until}d` : 'None scheduled';
   const riskCaption = `Model forecast · ${data.tracked_products ?? '–'} tracked products`;
@@ -1251,27 +1329,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
         if path == "/api/dashboard":
-            city = parse_qs(urlparse(self.path).query).get("city", [""])[0].strip().casefold()
-            stockout = read_csv("stockout_risk_report.csv")
-            overstock = read_csv("overstock_risk_report.csv")
-            # Reports cover every day of the test window; "today" is the latest date.
-            latest = max((row["date"] for row in stockout + overstock), default=None)
-            stockout = [row for row in stockout if row["date"] == latest]
-            overstock = [row for row in overstock if row["date"] == latest]
-            if city and city != "all":
-                stockout = [row for row in stockout if row["city"].casefold() == city]
-                overstock = [row for row in overstock if row["city"].casefold() == city]
-            festival = next_festival(read_csv_from_path(DATA_DIR / "festival_calendar_5yr.csv"))
-            if festival:
-                festival = {
-                    "name": festival["next_festival"],
-                    "date": festival["date"],
-                    "days_until": (date.fromisoformat(festival["date"]) - date.today()).days,
-                }
-            payload = {
-                "metrics": read_json("metrics.json"), "stockout": stockout, "overstock": overstock,
-                "latest": latest, "next_festival": festival, "city": city or "all", "tracked_products": tracked_product_count(),
-            }
+            payload = dashboard_payload(parse_qs(urlparse(self.path).query).get("city", [""])[0])
             body = json.dumps(payload).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1283,9 +1341,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             params = {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()}
             try:
                 payload = product_detail.product_detail(params.get("city", ""), params.get("sku_id", ""),
-                                                        params.get("scope", "regional"))
+                                                        params.get("scope", "regional"), params.get("festival", ""))
             except product_detail.ProductNotFound:
                 self.send_json_not_found("Product not found", params.get("sku_id", ""))
+                return
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            except FileNotFoundError as error:
+                self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
+                return
+            self.send_json(200, payload)
+            return
+        if path == "/api/festival-planning":
+            params = {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()}
+            try:
+                payload = festival_uplift.festival_planning(params.get("city", ""), params.get("festival", ""),
+                                                            params.get("rank", "units"))
+            except stockout_view.UnknownCity as error:
+                self.send_json_not_found("Unknown city", str(error))
                 return
             except ValueError as error:
                 self.send_json(400, {"error": str(error)})

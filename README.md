@@ -18,6 +18,7 @@ BigBasket catalog (data/archive_products.csv)
   └─ sample_products.py      344 tracked products, 43 per model category (seeded)
       └─ generate_synthetic_data.py   5 years of daily POS history per product x city
           └─ build_features.py        calendar, product and leak-free lag features
+              ├─ festival_uplift.py   festival-week uplift per city x category, past years only
               └─ train_model.py       LightGBM per segment, CV + held-out test, risk report
                   └─ forecast_regional.py   direct forecasts for tracked products,
                                             K-nearest analogs for the rest of the catalog
@@ -35,7 +36,8 @@ BigBasket catalog (data/archive_products.csv)
 | `src/build_features.py` | Unconstrained demand target, features, categorical encodings |
 | `src/metrics.py` | MAE, RMSE, WAPE, MASE, Bias% (MAPE kept as legacy) |
 | `src/train_model.py` | Time-series CV, Optuna tuning, final-test evaluation, model risk report |
-| `src/forecast_regional.py` | Catalog-wide forecasts per city; free samples, store packaging and sub-₹1 products listed in `data/bigbasket_not_forecast.csv` |
+| `src/forecast_regional.py` | Catalog-wide forecasts per city (and each tracked product's forecast per day, `data/bigbasket_tracked_daily_forecast.csv`); free samples, store packaging and sub-₹1 products listed in `data/bigbasket_not_forecast.csv` |
+| `src/festival_uplift.py` | Festival-week demand uplift per city × category × festival from past years (`data/festival_uplift.csv`) and the admin "Festival planning" list |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
 | `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
@@ -43,7 +45,7 @@ BigBasket catalog (data/archive_products.csv)
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -83,6 +85,12 @@ Dashboard pages:
   whole catalog with each row's forecast source, and a browser for every
   generated dataset.
 
+Every date on the admin page counts from the **data date**: the last day of
+sales data, 25 Aug 2026, which is the day the regional forecast was made
+from. The header reads "Data as of 25 Aug 2026". The next-festival KPI, the
+occasion banner, the 7-day window and the festival countdowns never use the
+computer's clock.
+
 The dashboard has no authentication. Run it only on a trusted machine.
 
 ### Stockout views (admin)
@@ -118,9 +126,8 @@ listed under several SKUs appear once (`unique_products()`).
 - Filter state lives in the URL (`m_…` for the model report, `r_…` for the
   regional view, plus `city` and `rank`), so a view can be bookmarked.
   Switching city keeps the filters.
-- "Highest demand for the upcoming occasion" can rank by units or by
-  estimated revenue (forecast units × MRP, with the same occasion
-  weighting); products without an MRP can't rank by revenue.
+- "Highest demand — next 7 days" and "Festival planning" are described
+  below.
 
 The model report's table holds every tracked product, not only the stockout
 rows: `train_model.build_risk_report` is re-run on
@@ -156,15 +163,20 @@ was made from.
 
 - **Tracked products:** the last 60 days of units sold (solid) and true
   demand (dotted), stockout days shaded, then the next 7 days of forecast
-  (dashed). The forecast is LightGBM per day,
-  `forecast_regional.daily_forecasts`, the same values the regional forecast
-  averages: their mean equals `forecast_daily`.
-- **Analog products:** only the forecast. It is a 7-day average, so the line
-  is flat. A table lists the 5 tracked products it was built from, with
-  their normalised inverse-distance weights, price factors (0.5–2×) and
-  their own forecasts. `forecast_regional.py` saves these as
-  `analog_weights` / `analog_price_adj`, and the forecast values are
-  unchanged.
+  (dashed). The forecast is LightGBM per day
+  (`data/bigbasket_tracked_daily_forecast.csv`), the same values the regional
+  forecast averages: their mean equals `forecast_daily`.
+- **Analog products:** only the forecast, labelled "estimated, from 5
+  analogs". Each day is the weighted, price-adjusted average of the 5
+  analogs' forecasts for that day (same weights and price factors as
+  `forecast_daily`), scaled so the 7-day mean is exactly the saved
+  `forecast_daily`. The scaling only absorbs rounding in the saved weights
+  (under 0.5%), so risk and reorder numbers don't change. A table lists the
+  5 tracked products, with their normalised inverse-distance weights, price
+  factors (0.5–2×) and their own forecasts. `forecast_regional.py` saves
+  these as `analog_weights` / `analog_price_adj`, plus the tracked daily
+  forecasts in `data/bigbasket_tracked_daily_forecast.csv`. The forecast
+  values are unchanged.
 - **On every chart:** festival dates from the festival calendar as labelled
   vertical markers, and the current opening stock as a horizontal line. If
   the stock is more than 3× the largest daily value, the line is drawn at
@@ -186,7 +198,43 @@ GET /api/product?city=<city>&sku_id=<sku>[&scope=regional|model]
     -> {city, sku_id, scope, today, details, stock, history, forecast, festivals, analogs, notes}
 ```
 
-An unknown city or SKU returns a 404 JSON error.
+An unknown city or SKU returns a 404 JSON error. Adding `&festival=<name>`
+also returns the festival-planning calculation for that product.
+
+### Next 7 days and festival planning (admin)
+
+The model only forecasts 7 days ahead, so the regional section keeps two
+lists apart:
+
+- **"Highest demand — next 7 days (26 Aug–1 Sep)"** ranks by the 7-day
+  forecast (units) or by revenue (7-day units × MRP, estimated), one row
+  per product. There is no category boost: the old list multiplied
+  keyword-matched categories by 2.5 and the rest by 0.5.
+- **"Festival planning: <festival>"** defaults to the first festival after
+  the 7-day window (Ganesh Chaturthi, 14 Sep), and any festival in the next
+  12 months can be picked. For each product:
+
+      festival-week units = current 7-day forecast × uplift(city, category, festival)
+
+  The uplift is measured by `src/festival_uplift.py` from past years only.
+  For each past occurrence on or before the data date, it divides the mean
+  daily demand in the 7 days ending on the festival by the mean over the 4
+  normal weeks before it, then averages across years. Normal days have no
+  festival within 7 days either side. Demand is `build_features`'
+  unconstrained demand, summed per city and model category. Diwali, for
+  example: sweets ×2.7–3.0 and dairy ×2.0–2.2, depending on the city. The
+  list shows the uplift used and ranks by units or revenue, one row per
+  product, labelled "Planning estimate, not a model forecast (the model
+  forecasts 7 days ahead)". Festivals with no past occurrence (Mahalaya
+  Amavasya appears only in 2026) can't be picked. Clicking a product opens
+  its panel with the calculation.
+
+```
+GET /api/festival-planning?city=<city>&festival=<name>&rank=units|revenue
+    -> {festival, date, days_until, data_date, window_start, window_end, options, uplifts, rows}
+```
+
+URL state: `plan`, `plan_rank`, and `product_festival` for the panel note.
 
 ## Email alerts
 
@@ -261,7 +309,7 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
   admin regional panel shows the count with a link to the list.
 - One row per product in the dashboard's regional lists: the catalog lists
   some products under several SKUs (about 11% of SKUs), so "Highest demand
-  for the upcoming occasion" keeps one row per normalised name + pack size —
+  — next 7 days" keeps one row per normalised name + pack size —
   the directly forecast SKU if there is one, else the lowest SKU id. SKU
   counts and the catalog file are unchanged.
 - Risk split: about 97.5% of tracked product-days are "normal" over the test
@@ -400,5 +448,6 @@ Replace `data/pos_synthetic.csv` with a POS export that has the same columns:
 
 `data/sampled_products.csv` is the product master (`sku_id`, `brand`, `mrp`,
 `pack_size_value`, `brand_catalog_count`); keep it in step with your
-products. Then run `build_features.py`, `train_model.py --trials 40`,
-`forecast_regional.py` and `build_bigbasket_regional_risk.py`.
+products. Then run `build_features.py`, `festival_uplift.py`,
+`train_model.py --trials 40`, `forecast_regional.py` and
+`build_bigbasket_regional_risk.py`.

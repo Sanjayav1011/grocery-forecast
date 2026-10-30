@@ -10,24 +10,18 @@ import urllib.error
 import pandas as pd
 import pytest
 
+import numpy as np
+
 import forecast_regional
 import product_detail
 import stockout_view
-from config import DATA_DIR, LEAD_TIME_DAYS
-from test_dashboard_filters import fake_data, get, server  # noqa: F401  (pytest fixtures)
+from config import DATA_DIR
+from test_dashboard_filters import FALLING, RISING, fake_data, get, server  # noqa: F401  (pytest fixtures)
 
 TODAY = pd.Timestamp("2026-08-25")
 
 
-def fake_daily_forecasts(history, as_of):
-    """Stand-in for the LightGBM scorer: 1, 2, ... 7 units on the days after as_of."""
-    days = pd.date_range(as_of + pd.Timedelta(days=1), periods=LEAD_TIME_DAYS)
-    sku, city = history["sku_id"].iloc[0], history["city"].iloc[0]
-    return pd.DataFrame({"sku_id": sku, "city": city, "date": days, "prediction": range(1, LEAD_TIME_DAYS + 1)}), None
-
-
-def test_tracked_product_has_60_days_of_history_and_7_forecast_days(server, monkeypatch):
-    monkeypatch.setattr(forecast_regional, "daily_forecasts", fake_daily_forecasts)
+def test_tracked_product_has_60_days_of_history_and_7_forecast_days(server):
     product = get(server, "/api/product", sku_id="T1")  # scope regional, city Delhi
     history, forecast = product["history"], product["forecast"]
     assert product["today"] == "2026-08-25" and product["details"]["forecast_source"] == "lightgbm_direct"
@@ -36,7 +30,7 @@ def test_tracked_product_has_60_days_of_history_and_7_forecast_days(server, monk
     assert history[-1] == {"date": "2026-08-25", "units_sold": 10, "true_demand": 10.5, "stockout": False}
     assert [h["date"] for h in history if h["stockout"]] == ["2026-08-16"]  # age 10 in the fixture
     assert [f["date"] for f in forecast] == [d.date().isoformat() for d in pd.date_range("2026-08-26", periods=7)]
-    assert [f["units"] for f in forecast] == [1, 2, 3, 4, 5, 6, 7]
+    assert [f["units"] for f in forecast] == pytest.approx([12 * factor for factor in RISING])  # the saved daily file
     assert product["analogs"] == []
     assert product["stock"] == {"units": 18, "date": "2026-08-26", "simulated": True}
     details = product["details"]
@@ -47,10 +41,10 @@ def test_tracked_product_has_60_days_of_history_and_7_forecast_days(server, monk
     assert any("simulated" in note for note in product["notes"])
 
 
-def test_analog_product_lists_its_5_analogs_and_a_flat_forecast(server):
+def test_analog_product_lists_its_5_analogs(server):
     product = get(server, "/api/product", sku_id="A1")
     assert product["history"] == []
-    assert [f["units"] for f in product["forecast"]] == [30.0] * 7
+    assert len(product["forecast"]) == 7
     analogs = product["analogs"]
     assert len(analogs) == 5
     assert [a["sku_id"] for a in analogs] == ["T1", "T2", "T3", "T4", "T1"]
@@ -66,8 +60,20 @@ def test_duplicate_sku_hidden_from_tables_still_opens(server):
     assert get(server, "/api/product", sku_id="A4")["details"]["forecast_daily"] == 99.0
 
 
-def test_model_scope_details_come_from_the_risk_report(server, fake_data, monkeypatch):
-    monkeypatch.setattr(forecast_regional, "daily_forecasts", fake_daily_forecasts)
+def test_analog_daily_shape_is_the_weighted_analog_days_with_mean_forecast_daily(server):
+    # A1: analogs T1 T2 T3 T4 T1 (Delhi 12, 20, 14, 2, 12 a day), weights .4 .3 .1 .1 .1,
+    # price factors 1 1.2 .8 2 .5; T2 falls over the week, the others rise
+    daily = {sku: np.array(RISING) * level for sku, level in [("T1", 12), ("T3", 14), ("T4", 2)]}
+    daily["T2"] = np.array(FALLING) * 20
+    shape = sum(w * adj * daily[sku] for sku, w, adj in
+                zip(["T1", "T2", "T3", "T4", "T1"], [.4, .3, .1, .1, .1], [1, 1.2, .8, 2, .5]))
+    units = [f["units"] for f in get(server, "/api/product", sku_id="A1")["forecast"]]
+    assert units == pytest.approx(shape * 30 / shape.mean(), abs=1e-4)  # the analogs' daily shape...
+    assert np.mean(units) == pytest.approx(30.0, abs=1e-4)  # ...with the saved forecast_daily as its mean
+    assert len(set(units)) == 7  # not one flat value
+
+
+def test_model_scope_details_come_from_the_risk_report(server, fake_data):
     pd.DataFrame([{"date": "2026-08-25", "city": "Delhi", "sku_id": "T1", "category": "dairy", "pred": 10.0,
                    "opening_stock": 15, "days_until_delivery": 3}]).to_csv(fake_data / "test_predictions.csv", index=False)
     pd.DataFrame([("T1", "Amul Lassi 200 ml", "Amul", 25.0, "200.0", "ml")],
@@ -96,7 +102,7 @@ def test_bad_scope_is_400(server):
 def test_generated_forecast_line_averages_to_the_regional_forecast():
     """On the real data: the panel's per-day LightGBM line is what the regional forecast averages."""
     needed = [DATA_DIR / "bigbasket_regional_inventory.csv", DATA_DIR / "pos_synthetic.csv",
-              forecast_regional.MODELS_DIR / "lgbm_perishable.txt"]
+              forecast_regional.DAILY_PATH]
     if not all(path.exists() for path in needed):
         pytest.skip("pipeline outputs not generated; run run_pipeline.py first")
     stockout_view.clear_cache()
@@ -109,3 +115,29 @@ def test_generated_forecast_line_averages_to_the_regional_forecast():
     assert mean == pytest.approx(tracked["forecast_daily"], abs=2e-3)
     analog = rows[rows["forecast_source"] != "lightgbm_direct"].iloc[0]
     assert len(product_detail.product_detail(analog["city"], analog["sku_id"])["analogs"]) == 5
+
+
+def test_generated_analog_daily_forecasts_average_exactly_to_forecast_daily():
+    """
+    On the real data, for a sample of analog products in every city: the 7
+    daily values average to the saved forecast_daily (so risk and reorder are
+    unchanged), and the weights + price factors alone already reproduce it to
+    within 0.5% (the rescale only absorbs rounding of the saved weights).
+    """
+    if not (DATA_DIR / "bigbasket_regional_inventory.csv").exists() or not forecast_regional.DAILY_PATH.exists():
+        pytest.skip("pipeline outputs not generated; run run_pipeline.py first")
+    stockout_view.clear_cache()
+    product_detail.clear_cache()
+    rows, _ = stockout_view.raw_rows("regional")
+    analogs = rows[rows["forecast_source"] != "lightgbm_direct"]
+    sample = analogs.groupby("city").sample(100, random_state=0)
+    daily = product_detail.tracked_daily()
+    for _, row in sample.iterrows():
+        dates, values = product_detail.analog_daily(row, daily)
+        assert len(dates) == 7
+        assert values.mean() == pytest.approx(row["forecast_daily"], rel=1e-12)
+        ids = row["analog_ids"].split(";")
+        weights = np.array(row["analog_weights"].split(";"), dtype=float)
+        adj = np.array(row["analog_price_adj"].split(";"), dtype=float)
+        raw = (weights * adj) @ daily.loc[[(row["city"], sku) for sku in ids]].to_numpy() / weights.sum()
+        assert raw.mean() == pytest.approx(row["forecast_daily"], rel=5e-3, abs=2e-3)

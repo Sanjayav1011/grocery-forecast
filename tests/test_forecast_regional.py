@@ -116,6 +116,7 @@ def test_generated_forecast_excludes_free_samples_and_stays_near_its_analogs():
 def demand_row(sku, name, source="lightgbm_analog_k5", forecast=10.0, pack=("32.0", "g")):
     return {"region": "Delhi", "sku_id": sku, "product_name": name, "pack_size_value": pack[0],
             "pack_size_unit": pack[1], "forecast_source": source, "forecast_units": str(forecast),
+            "forecast_horizon": str(forecast * 7),
             "category": "snacks", "subcategory": "", "risk_status": "normal", "days_of_cover": "5",
             "reorder_qty": "0"}
 

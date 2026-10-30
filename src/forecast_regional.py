@@ -24,7 +24,9 @@ Also writes recent_daily, the trailing RECENT_DAYS mean demand (actual for
 tracked products, analog-estimated otherwise), which the regional risk
 report uses to simulate stock ordered before the forecast week.
 
-Output: data/bigbasket_regional_forecast.csv
+Output: data/bigbasket_regional_forecast.csv, and
+        data/bigbasket_tracked_daily_forecast.csv (each tracked product x
+        city's forecast per day, the values forecast_daily averages)
 Usage : python forecast_regional.py [--as-of YYYY-MM-DD] [--output PATH]
 """
 
@@ -41,6 +43,7 @@ from sample_products import SAMPLED_PRODUCTS_PATH, prepare_catalog
 
 OUT_PATH = DATA_DIR / "bigbasket_regional_forecast.csv"
 NOT_FORECAST_PATH = DATA_DIR / "bigbasket_not_forecast.csv"
+DAILY_PATH = DATA_DIR / "bigbasket_tracked_daily_forecast.csv"
 K_ANALOGS = 5
 MIN_MRP = 1.0  # rupees; below this the price says nothing about demand
 PRICE_ADJ_RANGE = (0.5, 2.0)
@@ -66,14 +69,15 @@ def booster(segment):
 def score_tracked(as_of=None):
     """
     Per tracked product x city: mean daily LightGBM forecast for the
-    LEAD_TIME_DAYS after as_of, and mean demand over the RECENT_DAYS up to as_of.
+    LEAD_TIME_DAYS after as_of, and mean demand over the RECENT_DAYS up to as_of;
+    also as_of and the per-day forecasts (daily_forecasts).
     """
     pos = pd.read_csv(RAW_POS_PATH, parse_dates=["date"])
     as_of = pos["date"].max() if as_of is None else pd.Timestamp(as_of)
     history = pos[(pos["date"] > as_of - pd.Timedelta(days=HISTORY_DAYS)) & (pos["date"] <= as_of)]
     daily, recent = daily_forecasts(history, as_of)
     forecast = daily.groupby(["sku_id", "city"])["prediction"].mean().rename("forecast_daily")
-    return pd.concat([forecast, recent], axis=1).reset_index(), as_of
+    return pd.concat([forecast, recent], axis=1).reset_index(), as_of, daily
 
 
 def daily_forecasts(history, as_of):
@@ -234,7 +238,8 @@ def main():
     parser.add_argument("--output", default=str(OUT_PATH))
     args = parser.parse_args()
 
-    tracked_forecast, as_of = score_tracked(args.as_of)
+    tracked_forecast, as_of, daily = score_tracked(args.as_of)
+    daily.to_csv(DAILY_PATH, index=False, date_format="%Y-%m-%d")
     products, not_forecast = catalog_products()
     forecast = analog_forecasts(products, tracked_forecast)
     not_forecast.to_csv(NOT_FORECAST_PATH, index=False)
@@ -245,6 +250,7 @@ def main():
     print(f"Saved {len(forecast):,} product x city forecasts ({counts.get(DIRECT, 0):,} tracked, "
           f"{counts.get(ANALOG, 0):,} analog products) for {forecast['forecast_start'].iloc[0]}.."
           f"{forecast['forecast_end'].iloc[0]} to {args.output}")
+    print(f"Saved {len(daily):,} tracked daily forecasts to {DAILY_PATH}")
     print(f"Saved {len(not_forecast):,} products not forecast (free sample / packaging / no price) "
           f"to {NOT_FORECAST_PATH}")
 
