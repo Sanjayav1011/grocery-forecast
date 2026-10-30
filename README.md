@@ -35,7 +35,7 @@ BigBasket catalog (data/archive_products.csv)
 | `src/build_features.py` | Unconstrained demand target, features, categorical encodings |
 | `src/metrics.py` | MAE, RMSE, WAPE, MASE, Bias% (MAPE kept as legacy) |
 | `src/train_model.py` | Time-series CV, Optuna tuning, final-test evaluation, model risk report |
-| `src/forecast_regional.py` | Catalog-wide forecasts per city; free samples and sub-₹5 products listed in `data/bigbasket_not_forecast.csv` |
+| `src/forecast_regional.py` | Catalog-wide forecasts per city; free samples, store packaging and sub-₹1 products listed in `data/bigbasket_not_forecast.csv` |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
 | `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
@@ -144,12 +144,20 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
 - WAPE by category on the final test: 10.0–10.5% for all 8 categories.
 - `true_demand` is the synthetic demand before the stock cap; it exists only
   because the data is synthetic.
-- Coverage: 56,227 of 57,013 catalog products (98.6%) get a forecast in every
+- Coverage: 56,214 of 57,013 catalog products (98.6%) get a forecast in every
   city — 344 directly from the models, the rest by analogs. 762 products fit
-  no model category, 6 are non-food items in food categories, and 18 are
-  "not forecast": 1 free sample and 17 with an MRP below ₹5 (paper bags,
-  labels, sachets, ₹4 biscuits), listed with their reason in
-  `data/bigbasket_not_forecast.csv`.
+  no model category, 6 are non-food items in food categories, and 31 are
+  "not forecast", each listed with its reason in
+  `data/bigbasket_not_forecast.csv`: 1 free sample (by name), 28 store
+  packaging supplies ("MCIP Consumables" boxes, bags, labels, tape — by name,
+  household only) and 2 products with an MRP below ₹1 (both ₹0). Cheap real
+  products such as ₹3.75 biscuits and ₹3 shampoo sachets are forecast. The
+  admin regional panel shows the count with a link to the list.
+- One row per product in the dashboard's regional lists: the catalog lists
+  some products under several SKUs (about 11% of SKUs), so "Highest demand
+  for the upcoming occasion" keeps one row per normalised name + pack size —
+  the directly forecast SKU if there is one, else the lowest SKU id. SKU
+  counts and the catalog file are unchanged.
 - Risk split: about 97.5% of tracked product-days are "normal" over the test
   window; 99.8% of catalog products are "normal" for the coming week.
 

@@ -14,9 +14,11 @@ Demand forecasts for every catalog product x city, from the trained models.
     clipped to PRICE_ADJ_RANGE so a near-zero price cannot blow it up.
   - Unmapped products and non-food items mis-filed in food categories are
     excluded and counted.
-  - Untracked free samples and products with an MRP below MIN_MRP get no
-    analog forecast; they are listed in data/bigbasket_not_forecast.csv
-    with reason "not forecast: free sample" or "not forecast: no price".
+  - Untracked free samples, BigBasket's own packaging supplies ("MCIP
+    Consumables" boxes, bags, labels, tape in household) and products with an
+    MRP below MIN_MRP get no analog forecast; they are listed in
+    data/bigbasket_not_forecast.csv with reason "not forecast: free sample",
+    "not forecast: packaging" or "not forecast: no price".
 
 Also writes recent_daily, the trailing RECENT_DAYS mean demand (actual for
 tracked products, analog-estimated otherwise), which the regional risk
@@ -40,13 +42,16 @@ from sample_products import SAMPLED_PRODUCTS_PATH, prepare_catalog
 OUT_PATH = DATA_DIR / "bigbasket_regional_forecast.csv"
 NOT_FORECAST_PATH = DATA_DIR / "bigbasket_not_forecast.csv"
 K_ANALOGS = 5
-MIN_MRP = 5.0  # rupees; below this the price says nothing about demand
+MIN_MRP = 1.0  # rupees; below this the price says nothing about demand
 PRICE_ADJ_RANGE = (0.5, 2.0)
 FREE_SAMPLE_PATTERN = r"(?i)\bfree\s*sample\b"
+PACKAGING_PATTERN = r"(?i)\bmcip\s+consumables?\b"  # store packaging supplies, not products for sale
+PACKAGING_CATEGORIES = {"household"}
 HISTORY_DAYS = 400  # covers lag_364 plus the 28-day rolling windows
 RECENT_DAYS = 28
 DIRECT, ANALOG = "lightgbm_direct", f"lightgbm_analog_k{K_ANALOGS}"
-OUTPUT_COLS = ["sku_id", "product_name", "brand", "category", "city", "forecast_daily", "forecast_horizon",
+OUTPUT_COLS = ["sku_id", "product_name", "brand", "pack_size_value", "pack_size_unit", "category", "city",
+               "forecast_daily", "forecast_horizon",
                "forecast_source", "analog_ids", "recent_daily", "forecast_start", "forecast_end"]
 
 
@@ -135,6 +140,8 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
         "sku_id": np.repeat(products["sku_id"].to_numpy(), len(cities)),
         "product_name": np.repeat(products["SKU Name"].to_numpy(), len(cities)),
         "brand": np.repeat(products["brand"].to_numpy(), len(cities)),
+        "pack_size_value": np.repeat(products["pack_size_value"].to_numpy(), len(cities)),
+        "pack_size_unit": np.repeat(products["pack_size_unit"].to_numpy(), len(cities)),
         "category": np.repeat(products["category"].to_numpy(), len(cities)),
         "city": np.tile(cities, len(products)),
         "forecast_source": np.repeat(source, len(cities)),
@@ -148,15 +155,19 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
 def not_forecast_reasons(products, tracked_ids):
     """
     "not forecast: ..." reason per untracked product that must not be
-    forecast by analogs, empty string otherwise. Uses the parsed MRP, so a
-    missing MRP (filled with the category median) is not "no price", but
-    an MRP of 0 is.
+    forecast by analogs, empty string otherwise. Free samples and packaging
+    are matched by name (packaging only in PACKAGING_CATEGORIES), whatever
+    their price. "No price" uses the parsed MRP, so a missing MRP (filled
+    with the category median) is not "no price", but an MRP of 0 is.
     """
     untracked = ~products["sku_id"].isin(tracked_ids)
-    free_sample = products["SKU Name"].fillna("").str.contains(FREE_SAMPLE_PATTERN)
+    name = products["SKU Name"].fillna("")
+    free_sample = name.str.contains(FREE_SAMPLE_PATTERN)
+    packaging = name.str.contains(PACKAGING_PATTERN) & products["category"].isin(PACKAGING_CATEGORIES)
     no_price = products["mrp"] < MIN_MRP
-    reasons = np.select([untracked & free_sample, untracked & no_price],
-                        ["not forecast: free sample", "not forecast: no price"], default="")
+    reasons = np.select([untracked & free_sample, untracked & packaging, untracked & no_price],
+                        ["not forecast: free sample", "not forecast: packaging", "not forecast: no price"],
+                        default="")
     return pd.Series(reasons, index=products.index)
 
 
@@ -208,7 +219,8 @@ def main():
     print(f"Saved {len(forecast):,} product x city forecasts ({counts.get(DIRECT, 0):,} tracked, "
           f"{counts.get(ANALOG, 0):,} analog products) for {forecast['forecast_start'].iloc[0]}.."
           f"{forecast['forecast_end'].iloc[0]} to {args.output}")
-    print(f"Saved {len(not_forecast):,} products not forecast (free sample / no price) to {NOT_FORECAST_PATH}")
+    print(f"Saved {len(not_forecast):,} products not forecast (free sample / packaging / no price) "
+          f"to {NOT_FORECAST_PATH}")
 
 
 if __name__ == "__main__":
