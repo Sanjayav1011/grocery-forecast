@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR, LEAD_TIME_DAYS
+import festival_readiness
 import festival_uplift
 import product_detail
 import stockout_view
@@ -372,7 +373,7 @@ PAGE = """<!doctype html>
     .category-menu { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin:24px 0 30px; } .category-panel { border:1px solid var(--line); border-radius:12px; background:linear-gradient(180deg, #ffffff 0%, #f5faf6 100%); padding:12px; box-shadow:0 4px 12px rgba(27,72,48,.05); min-height:132px; } .category-panel-header { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; } .category-panel-title { font-size:12px; font-weight:700; color:#176b37; letter-spacing:.02em; } .category-mini { font-size:10px; color:var(--muted); } .category-links { display:flex; flex-wrap:wrap; gap:6px; } .category-pill { display:inline-block; padding:7px 9px; border-radius:999px; border:1px solid #d4e5d7; background:#fff; color:#245e39; font-size:10px; text-decoration:none; line-height:1.2; } .category-pill:hover { border-color:var(--green); color:var(--green); }
     .store-actions { display:flex; align-items:center; gap:8px; } .basket-button { border:0; border-radius:6px; background:var(--green); color:#fff; padding:10px 14px; cursor:pointer; font-size:11px; } .basket-count { display:inline-block; min-width:18px; padding:2px 5px; border-radius:10px; background:#fff; color:var(--green); margin-left:4px; }
     .basket-panel { position:fixed; z-index:5; top:0; right:0; width:min(380px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); transition:transform .2s ease; } .basket-panel.open { transform:translateX(0); } .basket-head { display:flex; justify-content:space-between; align-items:center; } .basket-head button, .payment button.close { border:0; background:transparent; font-size:20px; cursor:pointer; color:var(--muted); } .basket-item { display:grid; grid-template-columns:1fr auto; gap:8px; border-bottom:1px solid var(--line); padding:12px 0; font-size:11px; } .basket-item button { border:1px solid #b9d5be; background:#fff; border-radius:4px; cursor:pointer; } .basket-total { display:flex; justify-content:space-between; margin:18px 0; font-weight:700; } .checkout { width:100%; border:0; border-radius:6px; padding:11px; background:var(--green); color:#fff; cursor:pointer; } .payment { display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); } .payment.open { display:block; } .payment label { display:block; color:var(--muted); font-size:10px; margin:10px 0 4px; } .payment input { width:100%; border:1px solid #b9d5be; border-radius:5px; padding:9px; }
-    .regional-intelligence, .model-risk { margin:0 0 30px; } .region-tabs { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; } .region-tab { border:1px solid #b9d5be; border-radius:18px; padding:8px 14px; background:#fff; color:#28633d; cursor:pointer; font-size:11px; } .region-tab.active { background:var(--green); color:#fff; } .region-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:12px; } .region-metric { border:1px solid var(--line); border-radius:7px; background:#fff; padding:12px; } .region-metric span { display:block; color:var(--muted); font-size:10px; margin-bottom:5px; } .region-metric strong { font-size:16px; color:var(--text); } .region-metric.alert strong { color:var(--red); } .region-metric.warn strong { color:var(--amber); } .occasion { border:1px solid #cfe5d2; border-radius:7px; background:#eff9f0; padding:12px; margin-bottom:12px; color:#28633d; font-size:12px; } .regional-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .regional-panel { border:1px solid var(--line); border-radius:7px; background:#fff; overflow:hidden; } .regional-panel h3 { margin:0; padding:11px 12px; font-size:12px; color:var(--text); background:#f0f6f0; } .regional-panel table { min-width:0; } .regional-panel td, .regional-panel th { padding:8px 10px; } .regional-panel td { font-size:10px; } .regional-panel .risk { color:var(--red); } .regional-panel .safe { color:var(--green); }
+    .regional-intelligence, .model-risk { margin:0 0 30px; } .region-tabs { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; } .region-tab { border:1px solid #b9d5be; border-radius:18px; padding:8px 14px; background:#fff; color:#28633d; cursor:pointer; font-size:11px; } .region-tab.active { background:var(--green); color:#fff; } .region-summary { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:12px; } .region-metric { border:1px solid var(--line); border-radius:7px; background:#fff; padding:12px; } .region-metric span { display:block; color:var(--muted); font-size:10px; margin-bottom:5px; } .region-metric strong { font-size:16px; color:var(--text); } .region-metric.alert strong { color:var(--red); } .region-metric.warn strong { color:var(--amber); } .occasion { border:1px solid #cfe5d2; border-radius:7px; background:#eff9f0; padding:12px; margin-bottom:12px; color:#28633d; font-size:12px; } .regional-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .regional-panel { border:1px solid var(--line); border-radius:7px; background:#fff; overflow:hidden; } .regional-panel h3 { margin:0; padding:11px 12px; font-size:12px; color:var(--text); background:#f0f6f0; } .regional-panel table { min-width:0; } .regional-panel td, .regional-panel th { padding:8px 10px; } .regional-panel td { font-size:10px; } .regional-panel .risk { color:var(--red); } .regional-panel .safe { color:var(--green); }
     .stockout-view .view-tabs { display:flex; gap:6px; padding:10px 12px 0; } .stockout-view .filter { padding:6px 11px; font-size:10px; } .view-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px 12px; } .view-toolbar input, .view-toolbar select, .view-toolbar button, .view-toolbar a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 8px; font-size:10px; text-decoration:none; cursor:pointer; } .view-toolbar input[type=number] { width:68px; } .view-toolbar [data-key=brand], .view-toolbar [data-key=q] { width:150px; } .view-count { margin-left:auto; color:var(--muted); font-size:10px; } .view-caption { padding:0 12px 8px; color:var(--muted); font-size:10px; line-height:1.4; } .stockout-view .table-wrap { overflow:auto; max-height:560px; border-width:1px 0; border-radius:0; } .stockout-view th { position:sticky; top:0; z-index:1; } .stockout-view table { min-width:940px; } th.sortable { cursor:pointer; white-space:nowrap; } th.sortable:hover { color:var(--green); } tr.brand-row { cursor:pointer; } .view-pager { display:flex; align-items:center; gap:10px; padding:8px 12px; color:var(--muted); font-size:10px; } .view-pager button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:5px 9px; cursor:pointer; font-size:10px; } .view-pager button:disabled { opacity:.5; cursor:default; } .rank-toggle { float:right; color:var(--muted); font-weight:400; font-size:10px; } .rank-toggle .filter { padding:3px 9px; font-size:10px; margin-left:4px; }
     .product-link { color:inherit; text-decoration:none; } .product-link:hover, .product-link:focus { color:var(--green); text-decoration:underline; }
     .product-panel { position:fixed; z-index:6; top:0; right:0; width:min(860px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); visibility:hidden; transition:transform .2s ease, visibility .2s; } .product-panel.open { transform:translateX(0); visibility:visible; } .product-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; } .product-panel-head h2 { margin:0; font-size:16px; color:var(--text); } .product-panel-head button { border:0; background:transparent; font-size:22px; line-height:1; cursor:pointer; color:var(--muted); } .product-panel h3 { margin:18px 0 8px; font-size:12px; color:var(--text); } .product-panel .risk { color:var(--red); } .product-panel td { font-size:10px; padding:7px 10px; }
@@ -482,7 +483,7 @@ PAGE = """<!doctype html>
     <nav class="category-menu customer-only" id="category-menu" aria-label="Shop by category"></nav>
     <section class="hero-banner customer-only"><div class="hero-copy"><div class="hero-kicker">Good food, right on time</div><h2>Freshness for every day</h2><p>Find your everyday favourites, handpicked fresh and delivered straight to your door.</p><a class="hero-cta" href="#catalog">Shop groceries <span>→</span></a></div><div class="hero-art"><img id="hero-product-image" alt="Featured product from our catalog"></div></section>
     <section class="service-strip customer-only" aria-label="Shopping benefits"><div class="service-item"><span class="service-icon">🌿</span><div><strong>Freshly picked</strong><span>Quality essentials for your home</span></div></div><div class="service-item"><span class="service-icon">🚚</span><div><strong>Convenient delivery</strong><span>Choose what works for you</span></div></div><div class="service-item"><span class="service-icon">🛍️</span><div><strong>Everyday favourites</strong><span>All your grocery needs in one place</span></div></div></section>
-    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="demand-title">Highest demand — next 7 days</span> <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast (7 days)</th><th>Est. revenue (7 days)</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="plan-title">Festival planning</span> <span class="rank-toggle" id="plan-rank-toggle"></span></h3><div class="view-toolbar"><select id="plan-festival" aria-label="Festival"></select><span class="view-count" id="plan-uplifts"></span></div><div class="view-caption" id="plan-caption"></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>7-day forecast</th><th>Uplift (category)</th><th>Festival-week units</th><th>Est. revenue</th><th>Category</th></tr></thead><tbody id="plan-body"></tbody></table></div></div></section>
+    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="demand-title">Highest demand — next 7 days</span> <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast (7 days)</th><th>Est. revenue (7 days)</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="plan-title">Festival planning</span> <span class="rank-toggle" id="plan-rank-toggle"></span></h3><div class="view-toolbar"><select id="plan-festival" aria-label="Festival"></select><span class="view-count" id="plan-uplifts"></span></div><div class="view-caption" id="plan-caption"></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>7-day forecast</th><th>Uplift (category)</th><th>Festival-week units</th><th>Est. revenue</th><th>Category</th></tr></thead><tbody id="plan-body"></tbody></table></div></div><div class="regional-panel stockout-view" style="margin-top:12px"><h3 id="ready-title">Festival readiness</h3><div class="view-tabs" id="ready-tabs"></div><div class="view-toolbar"><select id="ready-status" aria-label="Status"></select><select id="ready-category" aria-label="Category"></select><input id="ready-brand" list="ready-brand-list" placeholder="Brand / company" aria-label="Brand"><datalist id="ready-brand-list"></datalist><button type="button" id="ready-clear">Clear filters</button><a id="ready-download" href="#">Download CSV</a><span class="view-count" id="ready-count"></span></div><div class="view-caption" id="ready-caption"></div><div class="table-wrap"><table><thead id="ready-head"></thead><tbody id="ready-body"></tbody></table></div><div class="view-pager"><button type="button" id="ready-prev">Previous</button><span id="ready-page"></span><button type="button" id="ready-next">Next</button></div></div></section>
   <div class="summary admin-only" id="summary"></div>
     <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
     <div class="section-eyebrow customer-only">Picked for your kitchen</div><div class="catalog-head customer-only"><h2>Shop groceries <span id="catalog-count" class="subhead"></span></h2><div class="subhead">Fresh picks for every day</div></div>
@@ -697,7 +698,7 @@ function renderRegional() {
   document.getElementById('rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${rankBy === key ? 'active' : ''}" data-rank="${key}">${label}</button>`).join('')}`;
   document.querySelectorAll('[data-rank]').forEach(button => button.addEventListener('click', () => { rankBy = button.dataset.rank; saveUrlState(); renderRegional(); }));
   const festival = region.next_festival;
-  document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Next festival</span><strong>${festival ? `${escapeHtml(festival.name)} · ${festival.days_until}d` : 'None scheduled'}</strong></div>`;
+  document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Next festival</span><strong>${festival ? `${escapeHtml(festival.name)} · ${festival.days_until}d` : 'None scheduled'}</strong></div><div class="region-metric" id="readiness-kpi"><span>Festival readiness</span><strong>–</strong></div>`;
   document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`;
   const windowLabel = `${shortDate(region.window_start)}–${shortDate(region.window_end)}`;
   const inWindow = festival && festival.date <= region.window_end;
@@ -707,6 +708,7 @@ function renderRegional() {
   document.getElementById('demand-title').textContent = `Highest demand — next 7 days (${windowLabel})`;
   document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td>${fmt(row.forecast_7d)} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join('');
   renderFestivalPlanning().catch(error => console.error(error));
+  renderReadiness().catch(error => console.error(error));
 }
 let planFestival = '';
 let planRank = 'units';
@@ -740,6 +742,7 @@ function saveUrlState() {
   if (openProduct) { params.set('product', openProduct.sku); params.set('product_city', openProduct.city); params.set('product_scope', openProduct.scope); if (openProduct.festival) params.set('product_festival', openProduct.festival); }
   if (planFestival) params.set('plan', planFestival);
   if (planRank !== 'units') params.set('plan_rank', planRank);
+  READY_FILTERS.forEach(key => { if (readinessState[key] && !(key === 'page' && readinessState[key] === '0')) params.set(`ready_${key}`, readinessState[key]); });
   stockoutViews.forEach(view => Object.entries(view.state).forEach(([key, value]) => {
     if (value && !(key === 'page' && value === '0') && !(key === 'view' && value === 'table')) params.set(`${view.prefix}_${key}`, value);
   }));
@@ -753,6 +756,7 @@ function readUrlState() {
   if (params.get('product')) openProduct = {sku: params.get('product'), city: params.get('product_city') || selectedRegion, scope: params.get('product_scope') || 'regional', festival: params.get('product_festival') || ''};
   planFestival = params.get('plan') || '';
   if (params.get('plan_rank') === 'revenue') planRank = 'revenue';
+  READY_FILTERS.forEach(key => { readinessState[key] = params.get(`ready_${key}`) || (key === 'page' ? '0' : ''); });
   return params;
 }
 const fmt = (value, digits = 0) => value == null ? '–' : Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
@@ -1075,6 +1079,73 @@ document.addEventListener('click', event => {
 });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeProductPanel(); });
 document.getElementById('product-panel-close').addEventListener('click', closeProductPanel);
+const READY_FILTERS = ['status', 'category', 'brand', 'sort', 'order', 'page'];
+const readinessState = {status: '', category: '', brand: '', sort: '', order: '', page: '0'};
+let readinessRequest = 0;
+const READY_COLUMNS = [['Product'], ['Brand'], ['Category'], ['Current stock', 'stock'], ['Festival-week demand', 'demand'], ['Shortfall', 'shortfall'], ['Order by', 'order_by'], ['Suggested order', 'suggested'], ['Status']];
+const STATUS_CLASS = {'Order now': 'cover', 'At risk': 'cover high', 'Ready': 'safe'};
+function readinessQuery(extra = {}) {
+  const query = new URLSearchParams({city: selectedRegion, festival: planFestival});
+  READY_FILTERS.filter(key => key !== 'page').forEach(key => { if (readinessState[key]) query.set(key, readinessState[key]); });
+  Object.entries(extra).forEach(([key, value]) => query.set(key, value));
+  return query;
+}
+function setReadiness(changes) { Object.assign(readinessState, changes); if (!('page' in changes)) readinessState.page = '0'; saveUrlState(); renderReadiness().catch(error => console.error(error)); }
+async function renderReadiness() {
+  const request = ++readinessRequest;
+  const offset = Number(readinessState.page) * STOCKOUT_PAGE_SIZE;
+  const response = await fetch(`/api/readiness?${readinessQuery({offset: String(offset), limit: String(STOCKOUT_PAGE_SIZE)})}`);
+  const r = await response.json();
+  if (request !== readinessRequest) return;
+  const body = document.getElementById('ready-body');
+  if (!response.ok) { body.innerHTML = `<tr><td class="empty" colspan="9">${escapeHtml(r.error || 'Unable to load readiness')}</td></tr>`; return; }
+  const weekStart = addDays(isoDay(r.date), -6);
+  document.getElementById('ready-title').textContent = `${r.festival} readiness (${shortDate(r.date)}, in ${r.days_until} days)`;
+  document.getElementById('readiness-kpi').innerHTML = `<span>${escapeHtml(r.festival)} readiness · order now</span><strong style="color:var(--red)">${r.counts['Order now'].toLocaleString()}</strong><small class="metric-note">${r.counts['At risk'].toLocaleString()} at risk · ${r.counts.Ready.toLocaleString()} ready · planning estimate</small>`;
+  document.getElementById('ready-tabs').innerHTML = regionalData.map(item => `<button type="button" class="filter ${item.region === r.city ? 'active' : ''}" data-ready-city="${escapeHtml(item.region)}">${escapeHtml(item.region)}</button>`).join('');
+  document.getElementById('ready-status').innerHTML = `<option value="">All statuses</option>${['Order now', 'At risk', 'Ready'].map(status => `<option value="${status}">${status} (${r.counts[status].toLocaleString()})</option>`).join('')}`;
+  document.getElementById('ready-status').value = readinessState.status;
+  document.getElementById('ready-category').innerHTML = `<option value="">All categories</option>${r.categories.map(category => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('')}`;
+  document.getElementById('ready-category').value = readinessState.category;
+  document.getElementById('ready-brand-list').innerHTML = r.brands.map(brand => `<option value="${escapeHtml(brand)}"></option>`).join('');
+  if (document.activeElement !== document.getElementById('ready-brand')) document.getElementById('ready-brand').value = readinessState.brand;
+  document.getElementById('ready-count').textContent = `${r.total.toLocaleString()} of ${r.products.toLocaleString()} products`;
+  document.getElementById('ready-download').href = `/api/readiness?${readinessQuery({format: 'csv'})}`;
+  document.getElementById('ready-caption').textContent = `Planning estimate · stock simulated. Festival-week demand (${shortDate(weekStart)}–${shortDate(r.date)}) = 7-day forecast × the category's ${r.festival} uplift in ${r.city} (measured on past years). Available = stock on ${shortDate(r.stock_date)} − forecast demand before the festival week + regular deliveries arriving before then; perishables count only stock still within shelf life on ${shortDate(r.date)}. Shortfall = demand − available. Order now: a shortfall, and the last delivery before the festival arrives within 7 days (orders take 7 days). Suggested order = shortfall + 2 days of festival demand.`;
+  document.getElementById('ready-head').innerHTML = `<tr>${READY_COLUMNS.map(([label, key]) => {
+    if (!key) return `<th>${label}</th>`;
+    const arrow = readinessState.sort === key ? ((readinessState.order || (key === 'order_by' ? 'asc' : 'desc')) === 'asc' ? ' ↑' : ' ↓') : '';
+    return `<th class="sortable" data-ready-sort="${key}">${label}${arrow}</th>`;
+  }).join('')}</tr>`;
+  body.innerHTML = r.rows.map(row => {
+    const due = row.order_by && row.status !== 'Ready' ? `${shortDate(row.order_by)}${row.order_by <= r.data_date ? ' (now)' : ''}` : '–';
+    return `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'regional', r.festival)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.category)}</td><td>${fmt(row.opening_stock)}</td><td>${fmt(row.festival_week_units)}</td><td class="${row.shortfall > 0 ? 'risk' : ''}">${row.shortfall > 0 ? fmt(row.shortfall) : '–'}</td><td>${due}</td><td>${row.suggested_order ? fmt(row.suggested_order) : '–'}</td><td><span class="${STATUS_CLASS[row.status]}">${escapeHtml(row.status)}</span></td></tr>`;
+  }).join('') || `<tr><td class="empty" colspan="9">No products match these filters</td></tr>`;
+  const pageCount = Math.max(1, Math.ceil(r.total / STOCKOUT_PAGE_SIZE));
+  document.getElementById('ready-page').textContent = r.total ? `Products ${offset + 1}-${Math.min(offset + STOCKOUT_PAGE_SIZE, r.total)} of ${r.total.toLocaleString()}` : 'No products';
+  document.getElementById('ready-prev').disabled = Number(readinessState.page) === 0;
+  document.getElementById('ready-next').disabled = Number(readinessState.page) >= pageCount - 1;
+}
+function attachReadinessControls() {
+  document.getElementById('ready-status').addEventListener('change', event => setReadiness({status: event.target.value}));
+  document.getElementById('ready-category').addEventListener('change', event => setReadiness({category: event.target.value}));
+  document.getElementById('ready-brand').addEventListener('change', event => setReadiness({brand: event.target.value.trim()}));
+  document.getElementById('ready-clear').addEventListener('click', () => { document.getElementById('ready-brand').value = ''; setReadiness({status: '', category: '', brand: '', sort: '', order: ''}); });
+  document.getElementById('ready-prev').addEventListener('click', () => setReadiness({page: String(Math.max(0, Number(readinessState.page) - 1))}));
+  document.getElementById('ready-next').addEventListener('click', () => setReadiness({page: String(Number(readinessState.page) + 1)}));
+  document.getElementById('ready-head').addEventListener('click', event => {
+    const key = event.target.closest('[data-ready-sort]')?.dataset.readySort;
+    if (!key) return;
+    const defaultOrder = key === 'order_by' ? 'asc' : 'desc';
+    const current = readinessState.sort === key ? (readinessState.order || defaultOrder) : '';
+    setReadiness({sort: key, order: current ? (current === 'asc' ? 'desc' : 'asc') : defaultOrder});
+  });
+  document.getElementById('ready-tabs').addEventListener('click', event => {
+    const city = event.target.closest('[data-ready-city]')?.dataset.readyCity;
+    if (!city || city === selectedRegion) return;
+    selectedRegion = city; saveUrlState(); renderRegional(); refreshStockoutViews(); loadDashboard(selectedRegion).catch(error => console.error(error));
+  });
+}
 async function load() {
   const isAdmin = document.body.classList.contains('admin-page');
   if (!isAdmin) {
@@ -1124,7 +1195,8 @@ async function load() {
   createStockoutView('r', 'regional', 'regional-view', `Full catalog, stock simulated for {day}. ${simulated} Catalog products without sales history show their forecast instead.`);
   refreshStockoutViews();
   if (openProduct) openProductPanel(openProduct.sku, openProduct.city, openProduct.scope, null, openProduct.festival).catch(error => showToast(error.message, true));
-  document.getElementById('plan-festival').addEventListener('change', event => { planFestival = event.target.value; saveUrlState(); renderFestivalPlanning().catch(error => console.error(error)); });
+  document.getElementById('plan-festival').addEventListener('change', event => { planFestival = event.target.value; readinessState.page = '0'; saveUrlState(); renderFestivalPlanning().catch(error => console.error(error)); renderReadiness().catch(error => console.error(error)); });
+  attachReadinessControls();
   await loadDashboard(selectedRegion);
   regionalData = await (await fetch('/api/regional-intelligence')).json();
   renderRegional();
@@ -1360,6 +1432,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             except FileNotFoundError as error:
                 self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
+                return
+            self.send_json(200, payload)
+            return
+        if path == "/api/readiness":
+            params = {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()}
+            try:
+                rows, payload = festival_readiness.readiness_payload(params)
+            except stockout_view.UnknownCity as error:
+                self.send_json_not_found("Unknown city", str(error))
+                return
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            except FileNotFoundError as error:
+                self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
+                return
+            if params.get("format") == "csv":
+                body = festival_readiness.to_csv(rows).encode("utf-8")
+                name = re.sub(r"[^\w-]+", "_", f"{payload['festival']}_readiness_{payload['city']}").lower()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="{name}.csv"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             self.send_json(200, payload)
             return

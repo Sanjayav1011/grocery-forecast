@@ -41,6 +41,10 @@ from config import OUTPUTS_DIR, PROJECT_DIR  # noqa: E402
 
 REPORT_DIR = OUTPUTS_DIR
 ALERTS_DIR = OUTPUTS_DIR / "alerts"
+# "Festival readiness" section: the "Order now" rows (top READINESS_CAP) of the next
+# festival within READINESS_WINDOW_DAYS of the serving date (festival_readiness.py)
+READINESS_WINDOW_DAYS = 21
+READINESS_CAP = 25
 # the serving model risk report (serving_risk_report.py), not the evaluation one
 REPORT_FILES = {"stockout": "serving_stockout_risk_report.csv", "overstock": "serving_overstock_risk_report.csv"}
 VENDORS_PATH = PROJECT_DIR / "config" / "vendors.json"
@@ -132,6 +136,15 @@ def canonical_city(city):
     return next((name for name in load_vendors() if name.casefold() == city.casefold()), city)
 
 
+def load_readiness(city):
+    """The festival readiness section for a city, or None (no festival soon, or no readiness data)."""
+    try:
+        import festival_readiness
+        return festival_readiness.alert_rows(city, READINESS_WINDOW_DAYS)
+    except (FileNotFoundError, LookupError, ValueError):
+        return None
+
+
 def build_alert(city, date=None, categories=None, exclude=()):
     """
     The alert for one city and day (default: the report's latest day, as on
@@ -153,12 +166,20 @@ def build_alert(city, date=None, categories=None, exclude=()):
     stockout = rows[rows["risk_status"] == "stockout"].sort_values("days_of_cover")
     overstock = rows[rows["risk_status"] == "overstock"].sort_values("days_of_cover", ascending=False)
     counts = {"stockout": len(stockout), "overstock": len(overstock)}
+    readiness = load_readiness(city)
+    if readiness is not None:  # same category routing as the risk rows
+        ready_rows = readiness["rows"]
+        if categories is not None:
+            ready_rows = ready_rows[ready_rows["model_category"].isin(categories)]
+        readiness = {**readiness, "rows": ready_rows[~ready_rows["model_category"].isin(exclude)]}
     subject = f"[Stockout {counts['stockout']} | Overstock {counts['overstock']}] {city} inventory alert – {date}"
     attachment = pd.concat([stockout, overstock])[ATTACHMENT_COLS]
     return {
         "city": city, "date": date, "counts": counts, "subject": subject,
-        "html": render_html(city, date, stockout, overstock),
-        "text": render_text(city, date, stockout, overstock),
+        "html": render_html(city, date, stockout, overstock, readiness),
+        "text": render_text(city, date, stockout, overstock, readiness),
+        "readiness": None if readiness is None else {"festival": readiness["festival"], "date": readiness["date"],
+                                                     "order_now": len(readiness["rows"])},
         "csv": attachment.to_csv(index=False),
         "csv_name": f"{date}_{slug(city)}_risk.csv",
     }
@@ -176,6 +197,25 @@ def stockout_cells(row):
 
 def overstock_cells(row):
     return [product(row), f"{row['opening_stock']:.0f}", f"{row['days_of_cover']:.1f}", f"{row['shelf_life_days']:.0f}"]
+
+
+def readiness_cells(row):
+    return [product(row), row["model_category"], f"{row['opening_stock']:.0f}", f"{row['festival_week_units']:.0f}",
+            f"{row['shortfall']:.0f}", f"{row['order_by']:%Y-%m-%d}", f"{row['suggested_order']:.0f}"]
+
+
+READINESS_HEADERS = ["Product", "Category", "Stock", "Festival-week demand", "Shortfall", "Order by", "Suggested order"]
+
+
+def readiness_title(readiness):
+    return f"FESTIVAL READINESS: {readiness['festival'].upper()} {readiness['date']} – ORDER NOW"
+
+
+def readiness_note(readiness):
+    return (f"{readiness['festival']} is in {readiness['days_until']} days. Planning estimate, stock simulated: "
+            "festival-week demand = 7-day forecast x the category's festival uplift (past years); shortfall = demand "
+            "not covered by stock on hand and regular deliveries before the festival week. Suggested order = "
+            "shortfall + 2 days of festival demand.")
 
 
 STOCKOUT_HEADERS = ["Product", "Category", "Stock", "7-day forecast", "Days of cover", "Days to next delivery",
@@ -202,7 +242,7 @@ def html_table(title, color, headers, rows, cell_fn, cap):
             f"<tr>{head}</tr>{body}</table>{more}")
 
 
-def render_html(city, date, stockout, overstock):
+def render_html(city, date, stockout, overstock, readiness=None):
     city_e, date_e = html.escape(city), html.escape(date)
     reorder = int(stockout["reorder_qty"].sum())
     return (
@@ -217,6 +257,10 @@ def render_html(city, date, stockout, overstock):
         'Overstock: more stock than can sell before it expires. The full list is attached as CSV.</p>'
         + html_table("STOCKOUT", "#d94b4b", STOCKOUT_HEADERS, stockout, stockout_cells, STOCKOUT_CAP)
         + html_table("OVERSTOCK", "#d38b00", OVERSTOCK_HEADERS, overstock, overstock_cells, OVERSTOCK_CAP)
+        + ("" if readiness is None else
+           f'<p style="font-size:13px;color:#66806f;margin:20px 0 0;">{html.escape(readiness_note(readiness))}</p>'
+           + html_table(html.escape(readiness_title(readiness)), "#1f8f4d", READINESS_HEADERS, readiness["rows"],
+                        readiness_cells, READINESS_CAP))
         + f'<p style="font-size:12px;color:#888888;margin-top:24px;border-top:1px solid #dce8dc;padding-top:10px;">'
         f"{html.escape(FOOTER)}</p></div></body></html>")
 
@@ -232,12 +276,15 @@ def text_table(title, headers, rows, cell_fn, cap):
     return lines + [""]
 
 
-def render_text(city, date, stockout, overstock):
+def render_text(city, date, stockout, overstock, readiness=None):
     lines = [f"{city} inventory alert – {date}", "",
              f"Stockout risk: {len(stockout)}   Overstock risk: {len(overstock)}   "
              f"Units to reorder: {int(stockout['reorder_qty'].sum())}", ""]
     lines += text_table("STOCKOUT", STOCKOUT_HEADERS, stockout, stockout_cells, STOCKOUT_CAP)
     lines += text_table("OVERSTOCK", OVERSTOCK_HEADERS, overstock, overstock_cells, OVERSTOCK_CAP)
+    if readiness is not None:
+        lines += [readiness_note(readiness), ""]
+        lines += text_table(readiness_title(readiness), READINESS_HEADERS, readiness["rows"], readiness_cells, READINESS_CAP)
     return "\n".join(lines + ["--", FOOTER])
 
 

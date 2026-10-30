@@ -107,22 +107,25 @@ def upcoming_festivals(data_date, window_end):
     return festivals.drop_duplicates("festival_name").reset_index(drop=True)
 
 
-def festival_planning(city, festival="", rank="units", limit=10):
+def planning_rows(city, festival="", next_after_data_date=False):
     """
-    The admin "Festival planning" list for one city: per product (one row per
-    product), festival-week units = 7-day forecast x the measured uplift for
-    its model category in that city, and revenue = units x MRP; top `limit`
-    by units or revenue. `festival` defaults to the first festival after the
-    7-day forecast window. A planning estimate, not a model forecast.
+    The festival-planning estimate for every product in one city (one row per
+    product): festival-week units = 7-day forecast x the measured uplift for
+    its model category in that city. Products whose category has no measured
+    uplift are left out. Returns (meta, table); `festival` defaults to the
+    first festival after the 7-day forecast window. With
+    next_after_data_date, a named festival is its next occurrence after the
+    data date, even inside the forecast window (for the vendor alerts).
     """
     import stockout_view
 
-    if rank not in {"units", "revenue"}:
-        raise ValueError("rank must be units or revenue")
     rows, forecast_start = stockout_view.raw_rows("regional")
     data_date = forecast_start - pd.Timedelta(days=1)
     window_end = data_date + pd.Timedelta(days=LEAD_TIME_DAYS)
     options = upcoming_festivals(data_date, window_end)
+    if next_after_data_date:
+        options = festival_df()
+        options = options[options["date"] > data_date].drop_duplicates("festival_name").reset_index(drop=True)
     chosen = options[options["festival_name"].str.casefold() == festival.strip().casefold()] if festival else options.head(1)
     if chosen.empty:
         raise ValueError(f"no upcoming festival called {festival!r}")
@@ -146,6 +149,21 @@ def festival_planning(city, festival="", rank="units", limit=10):
     table["forecast_7d"] = table["forecast_daily"] * LEAD_TIME_DAYS
     table["festival_week_units"] = table["forecast_7d"] * table["uplift"]
     table["revenue_estimate"] = table["festival_week_units"] * table["price"]
+    meta = {"city": city, "festival": name, "date": day, "data_date": data_date, "forecast_start": forecast_start,
+            "window_end": window_end, "options": options, "uplifts": uplifts}
+    return meta, table
+
+
+def festival_planning(city, festival="", rank="units", limit=10):
+    """
+    The admin "Festival planning" list for one city: the top `limit`
+    products of planning_rows by festival-week units or revenue (units x
+    MRP). A planning estimate, not a model forecast.
+    """
+    if rank not in {"units", "revenue"}:
+        raise ValueError("rank must be units or revenue")
+    meta, table = planning_rows(city, festival)
+    name, day, data_date, uplifts = meta["festival"], meta["date"], meta["data_date"], meta["uplifts"]
     sort = "festival_week_units" if rank == "units" else "revenue_estimate"
     top = table.dropna(subset=[sort]).sort_values([sort, "sku_id"], ascending=[False, True]).head(limit)
     columns = ["sku_id", "city", "product_name", "brand", "category", "model_category", "price", "forecast_source",
@@ -153,12 +171,12 @@ def festival_planning(city, festival="", rank="units", limit=10):
     top = top[columns].round({"forecast_7d": 1, "festival_week_units": 1, "revenue_estimate": 0})
     as_day = lambda value: pd.Timestamp(value).date().isoformat()
     return {
-        "city": city, "festival": name, "date": as_day(day), "days_until": int((day - data_date).days),
-        "data_date": as_day(data_date), "window_start": as_day(forecast_start), "window_end": as_day(window_end),
-        "rank": rank,
+        "city": meta["city"], "festival": name, "date": as_day(day), "days_until": int((day - data_date).days),
+        "data_date": as_day(data_date), "window_start": as_day(meta["forecast_start"]),
+        "window_end": as_day(meta["window_end"]), "rank": rank,
         "options": [{"festival": row.festival_name, "date": as_day(row.date), "days_until": int((row.date - data_date).days),
                      "has_uplift": bool((load_uplifts()["festival"] == row.festival_name).any())}
-                    for row in options.itertuples(index=False)],
+                    for row in meta["options"].itertuples(index=False)],
         "uplifts": [{"category": category, "uplift": float(row["uplift"]), "occurrences": int(row["occurrences"]),
                      "first_year": int(row["first_year"]), "last_year": int(row["last_year"])}
                     for category, row in uplifts.sort_values("uplift", ascending=False).iterrows()],

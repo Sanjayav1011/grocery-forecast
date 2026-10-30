@@ -43,13 +43,14 @@ BigBasket catalog (data/archive_products.csv)
 | `src/festival_uplift.py` | Festival-week demand uplift per city × category × festival from past years (`data/festival_uplift.csv`) and the admin "Festival planning" list |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
+| `src/festival_readiness.py` | Festival readiness per product × city: festival-week demand vs stock and regular deliveries, shortfall, order-by date, status |
 | `src/serving_risk_report.py` | Model risk report for the serving date: tracked products, stock on the first forecast day vs the next 7 days of forecast |
 | `src/alerts.py` | Per-city vendor email alerts from the serving model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -278,6 +279,57 @@ GET /api/festival-planning?city=<city>&festival=<name>&rank=units|revenue
 
 URL state: `plan`, `plan_rank`, and `product_festival` for the panel note.
 
+### Festival readiness (admin)
+
+"<Festival> readiness" (Diwali at the serving date) applies to the festival
+picked under Festival planning. For every product in the city (one row per
+product), it checks whether the stock on hand plus the regular deliveries
+before the festival week cover the festival-week demand
+(`src/festival_readiness.py`). The stock is counted on 30 Oct, the morning
+after the serving date.
+
+- **Festival-week demand:** the festival-planning estimate, 7-day forecast ×
+  the category's measured uplift. The festival week is the 7 days ending on
+  the festival.
+- **Available by the festival week:** stock on hand, minus forecast demand
+  before the festival week, plus the regular deliveries that arrive before
+  it. Regular deliveries follow the existing cycle (next delivery in
+  `days_until_delivery`, then every `inventory.review_days_for` days), and
+  each brings one cycle of forecast demand. Demand before the week is taken
+  from the oldest stock first. Only stock still within shelf life on the
+  festival day counts. A batch delivered on day t keeps until t + shelf life
+  − 1, and the stock on hand came with the last delivery. Perishables (dairy
+  3 days, sweets 4) therefore rarely carry stock into Diwali.
+- **Shortfall:** festival-week demand − available, if positive.
+- **Order-by date:** the last regular delivery that arrives before the
+  festival, minus the 7-day order lead time.
+- **Status:**
+  - "Order now": a shortfall, and that delivery arrives within 7 days of the
+    serving date, so its order-by date has come.
+  - "At risk": a shortfall otherwise.
+  - "Ready": no shortfall.
+- **Suggested order:** shortfall + 2 days of festival demand
+  (`SAFETY_STOCK_DAYS`).
+
+The table has city tabs, filters for status, category and brand, sortable
+stock / demand / shortfall / order-by / suggested-order columns and a CSV
+download. It is labelled "Planning estimate · stock simulated". The KPI
+row shows the "order now" count, with at-risk and ready under it. URL state
+is `ready_status`, `ready_category`, `ready_brand`, `ready_sort` and
+`ready_order`.
+
+Only deliveries before the festival week count, so the shortfall is the
+whole festival-week requirement not already on the shelf. The suggested
+order stands in for the regular deliveries during that week, not on top of
+them. With uplifts of ×1.2–3, most products come out short: at the serving
+date, about 58% of products per city are "Order now".
+
+```
+GET /api/readiness?city=&festival=&status=&category=&brand=&sort=stock|demand|shortfall|order_by|suggested
+                  &order=asc|desc&limit=50&offset=0[&format=csv]
+    -> {festival, date, days_until, data_date, stock_date, counts, categories, brands, total, products, rows}
+```
+
 ## Email alerts
 
 `src/alerts.py` emails each city's vendor the rows from the serving model
@@ -289,6 +341,11 @@ rule.
 Each email has the subject `[Stockout x | Overstock y] <City> inventory alert – <date>`,
 summary counts, a STOCKOUT table sorted by days of cover (top 25), an
 OVERSTOCK table (top 15), and every row of the city's list attached as CSV.
+When a festival with measured uplifts is within 21 days of the serving
+date, the email also has a "Festival readiness: <festival> – order now"
+section: the top 25 "Order now" rows by shortfall, with the planning-estimate
+note and the same category routing as the risk rows. At the serving date,
+that festival is Diwali.
 
 ```bash
 python -m src.alerts --city all                      # dry run: outputs/alerts/<date>_<city>.html/.csv

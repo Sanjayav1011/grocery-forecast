@@ -59,6 +59,7 @@ def fake_project(tmp_path, monkeypatch):
     monkeypatch.setattr(alerts, "ALERTS_DIR", tmp_path / "alerts")
     monkeypatch.setattr(alerts, "VENDORS_PATH", tmp_path / "vendors.json")
     monkeypatch.setattr(alerts, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.setattr(alerts, "load_readiness", lambda city: None)  # no festival section unless a test adds one
     return tmp_path
 
 
