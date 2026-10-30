@@ -52,7 +52,15 @@ RECENT_DAYS = 28
 DIRECT, ANALOG = "lightgbm_direct", f"lightgbm_analog_k{K_ANALOGS}"
 OUTPUT_COLS = ["sku_id", "product_name", "brand", "pack_size_value", "pack_size_unit", "category", "city",
                "forecast_daily", "forecast_horizon",
-               "forecast_source", "analog_ids", "recent_daily", "forecast_start", "forecast_end"]
+               "forecast_source", "analog_ids", "analog_weights", "analog_price_adj", "recent_daily",
+               "forecast_start", "forecast_end"]
+_BOOSTERS = {}
+
+
+def booster(segment):
+    if segment not in _BOOSTERS:
+        _BOOSTERS[segment] = lgb.Booster(model_file=str(MODELS_DIR / f"lgbm_{segment}.txt"))
+    return _BOOSTERS[segment]
 
 
 def score_tracked(as_of=None):
@@ -63,7 +71,19 @@ def score_tracked(as_of=None):
     pos = pd.read_csv(RAW_POS_PATH, parse_dates=["date"])
     as_of = pos["date"].max() if as_of is None else pd.Timestamp(as_of)
     history = pos[(pos["date"] > as_of - pd.Timedelta(days=HISTORY_DAYS)) & (pos["date"] <= as_of)]
+    daily, recent = daily_forecasts(history, as_of)
+    forecast = daily.groupby(["sku_id", "city"])["prediction"].mean().rename("forecast_daily")
+    return pd.concat([forecast, recent], axis=1).reset_index(), as_of
 
+
+def daily_forecasts(history, as_of):
+    """
+    LightGBM forecast for each of the LEAD_TIME_DAYS after as_of (columns
+    sku_id, city, date, prediction) for every series in `history` (POS rows
+    for the HISTORY_DAYS up to as_of), and each series' mean demand over the
+    RECENT_DAYS up to as_of. Features are per series, so scoring one series
+    alone gives the same numbers as scoring the whole history.
+    """
     # Future rows carry what is known in advance (product, price); sales and
     # stock are unknown and promotions are assumed off. Every lag feature is
     # >= LEAD_TIME_DAYS, so these days only need history up to as_of.
@@ -80,11 +100,9 @@ def score_tracked(as_of=None):
     df["prediction"] = np.nan
     for segment, is_perishable in [("perishable", 1), ("nonperishable", 0)]:
         rows = df["is_perishable"] == is_perishable
-        booster = lgb.Booster(model_file=str(MODELS_DIR / f"lgbm_{segment}.txt"))
-        df.loc[rows, "prediction"] = np.clip(booster.predict(df.loc[rows, FEATURE_COLS]), 0, None)
-
-    forecast = df.groupby(["sku_id", "city"])["prediction"].mean().rename("forecast_daily")
-    return pd.concat([forecast, recent], axis=1).reset_index(), as_of
+        if rows.any():
+            df.loc[rows, "prediction"] = np.clip(booster(segment).predict(df.loc[rows, FEATURE_COLS]), 0, None)
+    return df[["sku_id", "city", "date", "prediction"]].reset_index(drop=True), recent
 
 
 def standardized_attributes(products, reference):
@@ -110,6 +128,8 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
 
     values = {col: np.empty((len(products), len(cities))) for col in value_cols}
     analog_ids = np.empty(len(products), dtype=object)
+    analog_weights = np.full(len(products), "", dtype=object)  # normalised inverse-distance weights
+    analog_price_adj = np.full(len(products), "", dtype=object)
     position = {index: i for i, index in enumerate(products.index)}
     for category, rows in products.groupby("category"):
         pool = rows[is_tracked.loc[rows.index]]
@@ -129,11 +149,15 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
             values[col][targets] = ((weights[:, :, None] * price_adj[:, :, None] * pool_values).sum(axis=1)
                                     / weights.sum(axis=1)[:, None])
         analog_ids[targets] = [";".join(ids) for ids in pool["sku_id"].to_numpy()[order]]
+        joined = lambda matrix: [";".join(f"{value:.4f}" for value in row) for row in matrix]
+        analog_weights[targets] = joined(weights / weights.sum(axis=1, keepdims=True))
+        analog_price_adj[targets] = joined(price_adj)
 
     tracked_rows = np.flatnonzero(is_tracked.to_numpy())
     for col in value_cols:
         values[col][tracked_rows] = by_sku[col].loc[products["sku_id"].iloc[tracked_rows]].to_numpy()
     analog_ids[tracked_rows] = ""
+    analog_weights[tracked_rows] = analog_price_adj[tracked_rows] = ""
     source = np.where(is_tracked, DIRECT, ANALOG)
 
     out = pd.DataFrame({
@@ -146,6 +170,8 @@ def analog_forecasts(products, tracked_forecast, value_cols=("forecast_daily", "
         "city": np.tile(cities, len(products)),
         "forecast_source": np.repeat(source, len(cities)),
         "analog_ids": np.repeat(analog_ids, len(cities)),
+        "analog_weights": np.repeat(analog_weights, len(cities)),
+        "analog_price_adj": np.repeat(analog_price_adj, len(cities)),
         **{col: values[col].reshape(-1).round(3) for col in value_cols},
     })
     out["forecast_horizon"] = (out["forecast_daily"] * LEAD_TIME_DAYS).round(2)

@@ -24,6 +24,7 @@ import pandas as pd
 import pytest
 
 import dashboard
+import product_detail
 import stockout_view
 
 PLANNING_DAY = pd.Timestamp("2026-08-26")
@@ -50,24 +51,30 @@ def fake_data(tmp_path, monkeypatch):
         "region": city, "sku_id": sku, "product_name": name, "brand": brand, "pack_size_value": "200.0",
         "pack_size_unit": "ml", "category": category, "subcategory": "", "price": price, "forecast_daily": daily,
         "forecast_units": daily, "forecast_source": source, "days_of_cover": cover, "days_until_delivery": 2,
-        "reorder_qty": int(daily * 9), "risk_status": risk,
+        "reorder_qty": int(daily * 9), "risk_status": risk, "opening_stock": round(daily * cover),
+        "analog_ids": "" if source == DIRECT else "T1;T2;T3;T4;T1",
+        "analog_weights": "" if source == DIRECT else "0.4;0.3;0.1;0.1;0.1",
+        "analog_price_adj": "" if source == DIRECT else "1.0;1.2;0.8;2.0;0.5",
     } for sku, city, name, brand, category, price, daily, cover, source, risk in PRODUCTS])
     inventory.to_csv(tmp_path / "bigbasket_regional_inventory.csv", index=False)
     pd.DataFrame({"forecast_start": [PLANNING_DAY.date().isoformat()]}).to_csv(
         tmp_path / "bigbasket_regional_forecast.csv", index=False)
     pos = [{"date": (PLANNING_DAY - pd.Timedelta(days=age)).date().isoformat(), "city": city, "sku_id": sku,
-            "units_sold": recent if age <= 28 else previous}
+            "units_sold": recent if age <= 28 else previous, "true_demand": (recent if age <= 28 else previous) + 0.5,
+            "stockout_flag": int(age == 10)}
            for (city, sku), (recent, previous) in DAILY_SALES.items() for age in range(0, 70)]
     pd.DataFrame(pos).to_csv(tmp_path / "pos_synthetic.csv", index=False)
     pd.DataFrame({"date": ["2099-01-01"], "next_festival": ["Diwali"], "days_until_next_festival": ["0"]}).to_csv(
         tmp_path / "festival_calendar_5yr.csv", index=False)
-    for module in (stockout_view, dashboard):
+    for module in (stockout_view, dashboard, product_detail):
         monkeypatch.setattr(module, "DATA_DIR", tmp_path)
     monkeypatch.setattr(stockout_view, "OUTPUTS_DIR", tmp_path)
     monkeypatch.setattr(dashboard, "REGIONAL_INTELLIGENCE_CACHE", None)
     stockout_view.clear_cache()
+    product_detail.clear_cache()
     yield tmp_path
     stockout_view.clear_cache()
+    product_detail.clear_cache()
 
 
 @pytest.fixture

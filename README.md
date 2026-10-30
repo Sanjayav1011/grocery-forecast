@@ -41,8 +41,9 @@ BigBasket catalog (data/archive_products.csv)
 | `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
+| `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -140,6 +141,52 @@ GET /api/stockout/brands?scope=&city=&<same filters>      -> {total, rows, categ
 ```
 
 An unknown city returns a 404 JSON error, and bad parameters return 400.
+
+### Product detail panel (admin)
+
+Click any product name in the risk tables (model report, regional
+stockout and overstock, highest demand) to open a side panel for that
+product in the selected city. Esc or × closes it. The panel is also in the
+URL (`product`, `product_city`, `product_scope`), so it can be bookmarked.
+
+The chart is inline SVG with no chart library, one y-axis in units per day.
+Hovering shows a crosshair and the values for that day, and a "Data table"
+toggle lists every value. "Today" is the last POS day the regional forecast
+was made from.
+
+- **Tracked products:** the last 60 days of units sold (solid) and true
+  demand (dotted), stockout days shaded, then the next 7 days of forecast
+  (dashed). The forecast is LightGBM per day,
+  `forecast_regional.daily_forecasts`, the same values the regional forecast
+  averages: their mean equals `forecast_daily`.
+- **Analog products:** only the forecast. It is a 7-day average, so the line
+  is flat. A table lists the 5 tracked products it was built from, with
+  their normalised inverse-distance weights, price factors (0.5–2×) and
+  their own forecasts. `forecast_regional.py` saves these as
+  `analog_weights` / `analog_price_adj`, and the forecast values are
+  unchanged.
+- **On every chart:** festival dates from the festival calendar as labelled
+  vertical markers, and the current opening stock as a horizontal line. If
+  the stock is more than 3× the largest daily value, the line is drawn at
+  the top and marked "off scale".
+- **Beside the chart:** brand, category, MRP, stock, days of cover, next
+  delivery, reorder qty, daily forecast and forecast source. These come from
+  the table the product was clicked in: the model risk report (stock
+  counted on the latest test day) or the regional report (stock simulated
+  for the first forecast day).
+
+Sales, true demand, stockout days and stock are labelled simulated, and
+analog forecasts are labelled estimated. Series colours are the dataviz
+reference slots 1–2 (blue `#2a78d6` for sales, orange `#eb6834` for demand
+and forecast). They passed the palette validator on the white panel
+(all-pairs CVD ΔE 24.7), and dash patterns tell the orange lines apart.
+
+```
+GET /api/product?city=<city>&sku_id=<sku>[&scope=regional|model]
+    -> {city, sku_id, scope, today, details, stock, history, forecast, festivals, analogs, notes}
+```
+
+An unknown city or SKU returns a 404 JSON error.
 
 ## Email alerts
 

@@ -25,7 +25,8 @@ DEMAND_NOISE = 0.12  # day-to-day demand noise, as in generate_synthetic_data.py
 REPORT_COLS = [
     "region", "sku_id", "category", "subcategory", "model_category", "product_name", "brand",
     "pack_size_value", "pack_size_unit", "price",
-    "forecast_units", "forecast_daily", "forecast_horizon", "forecast_source", "analog_ids",
+    "forecast_units", "forecast_daily", "forecast_horizon", "forecast_source", "analog_ids", "analog_weights",
+    "analog_price_adj",
     "opening_stock", "stock_source", "days_until_delivery", "days_of_cover", "shelf_life_days",
     "reorder_qty", "risk_status", "ean_code", "product_url", "image_url", "source_file",
 ]

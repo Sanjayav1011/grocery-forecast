@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR
+import product_detail
 import stockout_view
 from stockout_view import product_key, unique_products  # noqa: F401  (product_key kept for callers)
 CATALOG_CACHE = None
@@ -340,6 +341,10 @@ PAGE = """<!doctype html>
     .basket-panel { position:fixed; z-index:5; top:0; right:0; width:min(380px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); transition:transform .2s ease; } .basket-panel.open { transform:translateX(0); } .basket-head { display:flex; justify-content:space-between; align-items:center; } .basket-head button, .payment button.close { border:0; background:transparent; font-size:20px; cursor:pointer; color:var(--muted); } .basket-item { display:grid; grid-template-columns:1fr auto; gap:8px; border-bottom:1px solid var(--line); padding:12px 0; font-size:11px; } .basket-item button { border:1px solid #b9d5be; background:#fff; border-radius:4px; cursor:pointer; } .basket-total { display:flex; justify-content:space-between; margin:18px 0; font-weight:700; } .checkout { width:100%; border:0; border-radius:6px; padding:11px; background:var(--green); color:#fff; cursor:pointer; } .payment { display:none; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); } .payment.open { display:block; } .payment label { display:block; color:var(--muted); font-size:10px; margin:10px 0 4px; } .payment input { width:100%; border:1px solid #b9d5be; border-radius:5px; padding:9px; }
     .regional-intelligence, .model-risk { margin:0 0 30px; } .region-tabs { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; } .region-tab { border:1px solid #b9d5be; border-radius:18px; padding:8px 14px; background:#fff; color:#28633d; cursor:pointer; font-size:11px; } .region-tab.active { background:var(--green); color:#fff; } .region-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:12px; } .region-metric { border:1px solid var(--line); border-radius:7px; background:#fff; padding:12px; } .region-metric span { display:block; color:var(--muted); font-size:10px; margin-bottom:5px; } .region-metric strong { font-size:16px; color:var(--text); } .region-metric.alert strong { color:var(--red); } .region-metric.warn strong { color:var(--amber); } .occasion { border:1px solid #cfe5d2; border-radius:7px; background:#eff9f0; padding:12px; margin-bottom:12px; color:#28633d; font-size:12px; } .regional-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .regional-panel { border:1px solid var(--line); border-radius:7px; background:#fff; overflow:hidden; } .regional-panel h3 { margin:0; padding:11px 12px; font-size:12px; color:var(--text); background:#f0f6f0; } .regional-panel table { min-width:0; } .regional-panel td, .regional-panel th { padding:8px 10px; } .regional-panel td { font-size:10px; } .regional-panel .risk { color:var(--red); } .regional-panel .safe { color:var(--green); }
     .stockout-view .view-tabs { display:flex; gap:6px; padding:10px 12px 0; } .stockout-view .filter { padding:6px 11px; font-size:10px; } .view-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px 12px; } .view-toolbar input, .view-toolbar select, .view-toolbar button, .view-toolbar a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 8px; font-size:10px; text-decoration:none; cursor:pointer; } .view-toolbar input[type=number] { width:68px; } .view-toolbar [data-key=brand], .view-toolbar [data-key=q] { width:150px; } .view-count { margin-left:auto; color:var(--muted); font-size:10px; } .view-caption { padding:0 12px 8px; color:var(--muted); font-size:10px; line-height:1.4; } .stockout-view .table-wrap { overflow:auto; max-height:560px; border-width:1px 0; border-radius:0; } .stockout-view th { position:sticky; top:0; z-index:1; } .stockout-view table { min-width:940px; } th.sortable { cursor:pointer; white-space:nowrap; } th.sortable:hover { color:var(--green); } tr.brand-row { cursor:pointer; } .view-pager { display:flex; align-items:center; gap:10px; padding:8px 12px; color:var(--muted); font-size:10px; } .view-pager button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:5px 9px; cursor:pointer; font-size:10px; } .view-pager button:disabled { opacity:.5; cursor:default; } .rank-toggle { float:right; color:var(--muted); font-weight:400; font-size:10px; } .rank-toggle .filter { padding:3px 9px; font-size:10px; margin-left:4px; }
+    .product-link { color:inherit; text-decoration:none; } .product-link:hover, .product-link:focus { color:var(--green); text-decoration:underline; }
+    .product-panel { position:fixed; z-index:6; top:0; right:0; width:min(860px,100%); height:100vh; overflow:auto; padding:22px; background:#fff; box-shadow:-8px 0 24px rgba(20,60,35,.18); transform:translateX(105%); visibility:hidden; transition:transform .2s ease, visibility .2s; } .product-panel.open { transform:translateX(0); visibility:visible; } .product-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; } .product-panel-head h2 { margin:0; font-size:16px; color:var(--text); } .product-panel-head button { border:0; background:transparent; font-size:22px; line-height:1; cursor:pointer; color:var(--muted); } .product-panel h3 { margin:18px 0 8px; font-size:12px; color:var(--text); } .product-panel .risk { color:var(--red); } .product-panel td { font-size:10px; padding:7px 10px; }
+    .product-layout { display:grid; grid-template-columns:minmax(0,1fr) 220px; gap:18px; margin-top:12px; } .chart-box { position:relative; } .chart-box svg { display:block; width:100%; height:auto; } .chart-legend { display:flex; flex-wrap:wrap; gap:4px 12px; margin-bottom:6px; color:var(--muted); font-size:10px; } .key { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:5px; vertical-align:middle; } .key.dotted { border-top-style:dotted; } .key.dashed { border-top-style:dashed; } .swatch { display:inline-block; width:10px; height:10px; margin-right:5px; border-radius:2px; opacity:.3; vertical-align:middle; } .chart-tooltip { position:absolute; top:40px; min-width:170px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--muted); font-size:10px; line-height:1.6; box-shadow:0 4px 12px rgba(20,60,35,.12); pointer-events:none; } .chart-tooltip strong { color:var(--text); font-size:11px; } .tip-date { color:var(--text); font-weight:600; } .product-facts { display:grid; grid-template-columns:auto 1fr; align-content:start; gap:7px 10px; margin:0; font-size:11px; } .product-facts dt { color:var(--muted); font-size:10px; } .product-facts dd { margin:0; color:var(--text); } .chart-table { margin-top:14px; font-size:11px; } .chart-table summary { color:var(--green); cursor:pointer; } .chart-table .table-wrap { max-height:300px; overflow:auto; margin-top:8px; }
+    @media (max-width:700px) { .product-layout { grid-template-columns:1fr; } }
     .datasets { margin-top:34px; } .dataset-toolbar { display:flex; align-items:center; gap:10px; margin:14px 0; } .dataset-toolbar select, .dataset-toolbar a { border:1px solid #b9d5be; border-radius:7px; background:#fff; color:var(--text); padding:8px 10px; font-size:11px; } .dataset-toolbar a { text-decoration:none; } .dataset-meta { color:var(--muted); font-size:11px; } .dataset-table { max-height:390px; overflow:auto; } .dataset-table table { min-width:720px; } .dataset-table th { position:sticky; top:0; } .dataset-page { display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--muted); font-size:11px; } .dataset-page button { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:var(--text); padding:6px 10px; cursor:pointer; }
     .admin-only { display:none !important; } .page-nav { display:flex; align-items:center; gap:8px; } .page-nav a { border:1px solid #b9d5be; border-radius:6px; background:#fff; color:#28633d; padding:9px 12px; text-decoration:none; font-size:11px; } .page-nav a[aria-current="page"] { background:var(--green); border-color:var(--green); color:#fff; } .header-actions { display:flex; align-items:center; gap:10px; }
     body.admin-page .admin-only { display:block !important; } body.admin-page .summary { display:grid !important; } body.admin-page .filters { display:flex !important; } body.admin-page main > .table-wrap.admin-only { display:block !important; } body.admin-page .customer-only { display:none !important; }
@@ -453,6 +458,7 @@ PAGE = """<!doctype html>
     <aside class="basket-panel customer-only" id="basket-panel"><div class="basket-head"><h2>Your basket</h2><button id="basket-close" aria-label="Close basket">&times;</button></div><div id="basket-items"></div><div class="basket-total"><span>Total</span><span id="basket-total">₹0.00</span></div><button class="checkout" id="checkout">Continue to payment</button><div class="payment" id="payment"><h3>Payment</h3><label for="customer-name">Name</label><input id="customer-name" placeholder="Your name"><label for="customer-phone">Phone</label><input id="customer-phone" placeholder="10-digit phone number"><label for="payment-method">Payment method</label><input id="payment-method" value="UPI / Card / Cash on delivery"><button class="checkout" id="place-order">Place demo order</button></div></aside>
     <section class="admin-products admin-only"><div class="catalog-head"><h2>Product catalog details <span id="admin-product-count" class="subhead"></span></h2><input id="admin-search" class="admin-product-search" type="search" placeholder="Search all product details"></div><div class="table-wrap product-admin-table"><table><thead><tr><th>Product</th><th>Category</th><th>Subcategory</th><th>Type</th><th>Brand</th><th>Size</th><th>MRP</th><th>EAN / SKU</th><th>Description</th><th>Image URL</th><th>Product URL</th></tr></thead><tbody id="admin-product-body"></tbody></table></div><div class="dataset-page"><button id="product-prev">Previous</button><span id="product-page-label"></span><button id="product-next">Next</button></div></section>
 </main>
+<aside class="product-panel admin-only" id="product-panel" role="dialog" aria-modal="true" aria-labelledby="product-panel-title" aria-hidden="true"><div class="product-panel-head"><h2 id="product-panel-title"></h2><button type="button" id="product-panel-close" aria-label="Close product panel">&times;</button></div><div id="product-panel-body"></div></aside>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 const money = value => Number(value).toFixed(1);
@@ -649,16 +655,18 @@ function renderCategories() {
     document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' });
   }));
 }
-function renderRegional() { const region = regionalData.find(item => item.region === selectedRegion) || regionalData[0]; if (!region) return; selectedRegion = region.region; document.getElementById('region-tabs').innerHTML = regionalData.map(item => `<button class="region-tab ${item.region === selectedRegion ? 'active' : ''}" data-region="${item.region}">${item.region}</button>`).join(''); document.querySelectorAll('.region-tab').forEach(button => button.addEventListener('click', () => { selectedRegion = button.dataset.region; renderRegional(); refreshStockoutViews(); loadDashboard(selectedRegion).catch(error => console.error(error)); })); document.getElementById('rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${rankBy === key ? 'active' : ''}" data-rank="${key}">${label}</button>`).join('')}`; document.querySelectorAll('[data-rank]').forEach(button => button.addEventListener('click', () => { rankBy = button.dataset.rank; saveUrlState(); renderRegional(); })); document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Planning window</span><strong>${region.days_until_occasion} days</strong></div>`; document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`; document.getElementById('occasion').textContent = `Upcoming occasion: ${region.occasion} on ${region.occasion_date}. Demand focus: ${region.demand_focus} (${region.focus_categories.join(', ')}).`; document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`; document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${escapeHtml(row.product_name)}</td><td>${row.forecast_units} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); }
+function renderRegional() { const region = regionalData.find(item => item.region === selectedRegion) || regionalData[0]; if (!region) return; selectedRegion = region.region; document.getElementById('region-tabs').innerHTML = regionalData.map(item => `<button class="region-tab ${item.region === selectedRegion ? 'active' : ''}" data-region="${item.region}">${item.region}</button>`).join(''); document.querySelectorAll('.region-tab').forEach(button => button.addEventListener('click', () => { selectedRegion = button.dataset.region; renderRegional(); refreshStockoutViews(); loadDashboard(selectedRegion).catch(error => console.error(error)); })); document.getElementById('rank-toggle').innerHTML = `Rank by: ${[['units', 'Units'], ['revenue', 'Revenue']].map(([key, label]) => `<button type="button" class="filter ${rankBy === key ? 'active' : ''}" data-rank="${key}">${label}</button>`).join('')}`; document.querySelectorAll('[data-rank]').forEach(button => button.addEventListener('click', () => { rankBy = button.dataset.rank; saveUrlState(); renderRegional(); })); document.getElementById('region-summary').innerHTML = `<div class="region-metric"><span>Region SKUs</span><strong>${region.sku_count.toLocaleString()}</strong></div><div class="region-metric alert"><span>Stockout risk</span><strong>${region.stockout_count.toLocaleString()}</strong></div><div class="region-metric warn"><span>Overstock risk</span><strong>${region.overstock_count.toLocaleString()}</strong></div><div class="region-metric"><span>Planning window</span><strong>${region.days_until_occasion} days</strong></div>`; document.getElementById('regional-caption').textContent = `Forecast: LightGBM (direct for ${data?.tracked_products ?? '–'} tracked, analog for the rest) · Stock: simulated`; document.getElementById('occasion').textContent = `Upcoming occasion: ${region.occasion} on ${region.occasion_date}. Demand focus: ${region.demand_focus} (${region.focus_categories.join(', ')}).`; document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`; document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td>${row.forecast_units} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join(''); }
 const STOCKOUT_KEYS = ['view', 'brand', 'category', 'min_price', 'max_price', 'top', 'trend', 'max_cover', 'source', 'q', 'sort', 'order', 'page'];
 const PRICE_BANDS = {lt50: ['', '49.99'], '50-200': ['50', '200'], '200-500': ['200.01', '500'], gt500: ['500.01', '']};
 const STOCKOUT_PAGE_SIZE = 50;
 const stockoutViews = [];
 let rankBy = 'units';
+let openProduct = null;
 function saveUrlState() {
   const params = new URLSearchParams();
   if (selectedRegion) params.set('city', selectedRegion);
   if (rankBy !== 'units') params.set('rank', rankBy);
+  if (openProduct) { params.set('product', openProduct.sku); params.set('product_city', openProduct.city); params.set('product_scope', openProduct.scope); }
   stockoutViews.forEach(view => Object.entries(view.state).forEach(([key, value]) => {
     if (value && !(key === 'page' && value === '0') && !(key === 'view' && value === 'table')) params.set(`${view.prefix}_${key}`, value);
   }));
@@ -669,6 +677,7 @@ function readUrlState() {
   const params = new URLSearchParams(location.search);
   if (params.get('city')) selectedRegion = params.get('city');
   if (params.get('rank') === 'revenue') rankBy = 'revenue';
+  if (params.get('product')) openProduct = {sku: params.get('product'), city: params.get('product_city') || selectedRegion, scope: params.get('product_scope') || 'regional'};
   return params;
 }
 const fmt = (value, digits = 0) => value == null ? '–' : Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
@@ -676,10 +685,10 @@ function trendCell(value) {
   if (value == null) return '–';
   return `<span class="${value >= 0 ? 'safe' : 'risk'}">${value >= 0 ? '▲' : '▼'} ${Math.abs(value).toFixed(1)}%</span>`;
 }
-function stockoutRowHtml(row) {
+function stockoutRowHtml(row, scope) {
   const daily = row.has_history ? fmt(row.avg_daily_sales, 1) : `${fmt(row.forecast_daily, 1)} <span class="subhead">forecast (no history)</span>`;
   const stockout = row.risk_status === 'stockout';
-  return `<tr><td>${escapeHtml(row.product_name)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.category)}</td><td>${row.price == null ? '–' : `₹${fmt(row.price, 2)}`}</td><td>${fmt(row.units_7d)}</td><td>${fmt(row.units_28d)}</td><td>${daily}</td><td>${trendCell(row.trend_pct)}</td><td class="${stockout ? 'risk' : ''}">${fmt(row.days_of_cover, 1)} days${stockout ? ' · stockout' : ''}</td><td>${fmt(row.days_until_delivery)} days</td><td>${fmt(row.reorder_qty)} units</td><td>${row.forecast_source === 'lightgbm_direct' ? 'direct' : 'analog'}</td></tr>`;
+  return `<tr><td>${productLink(row.product_name, row.sku_id, row.city, scope)}</td><td>${escapeHtml(row.brand)}</td><td>${escapeHtml(row.category)}</td><td>${row.price == null ? '–' : `₹${fmt(row.price, 2)}`}</td><td>${fmt(row.units_7d)}</td><td>${fmt(row.units_28d)}</td><td>${daily}</td><td>${trendCell(row.trend_pct)}</td><td class="${stockout ? 'risk' : ''}">${fmt(row.days_of_cover, 1)} days${stockout ? ' · stockout' : ''}</td><td>${fmt(row.days_until_delivery)} day${row.days_until_delivery === 1 ? '' : 's'}</td><td>${fmt(row.reorder_qty)} units</td><td>${row.forecast_source === 'lightgbm_direct' ? 'direct' : 'analog'}</td></tr>`;
 }
 const STOCKOUT_COLUMNS = [['Product'], ['Brand'], ['Category'], ['MRP', 'price'], ['Sold 7d'], ['Sold 28d', 'units_28d'], ['Avg daily sales (28d)', 'avg_daily_sales'], ['Trend', 'trend'], ['Days until stockout', 'cover'], ['Next delivery'], ['Reorder qty', 'reorder_qty'], ['Source']];
 const BRAND_COLUMNS = ['Brand', 'Units sold 28d', 'Revenue 28d (est.)', 'Products', 'At stockout risk', 'Reorder units', 'Avg cover'];
@@ -792,7 +801,7 @@ function createStockoutView(prefix, scope, containerId, caption) {
       const arrow = view.state.sort === key ? ((view.state.order || (['cover', 'price'].includes(key) ? 'asc' : 'desc')) === 'asc' ? ' ↑' : ' ↓') : '';
       return `<th class="sortable" data-sort="${key}">${label}${arrow}</th>`;
     }).join('')}</tr>`;
-    body.innerHTML = list.rows.map(stockoutRowHtml).join('') || `<tr><td class="empty" colspan="12">No products match these filters</td></tr>`;
+    body.innerHTML = list.rows.map(row => stockoutRowHtml(row, scope)).join('') || `<tr><td class="empty" colspan="12">No products match these filters</td></tr>`;
     pager.style.display = '';
     el.querySelector('[data-page-label]').textContent = list.total ? `Products ${offset + 1}-${Math.min(offset + STOCKOUT_PAGE_SIZE, list.total)} of ${list.total.toLocaleString()} · page ${Number(view.state.page) + 1} of ${pageCount}` : 'No products';
     el.querySelector('[data-prev]').disabled = Number(view.state.page) === 0;
@@ -802,6 +811,184 @@ function createStockoutView(prefix, scope, containerId, caption) {
   return view;
 }
 function refreshStockoutViews() { stockoutViews.forEach(view => view.refresh().catch(error => console.error(error))); }
+const CHART_COLORS = {sold: '#2a78d6', demand: '#eb6834', stockout: '#d94b4b', grid: '#dce8dc', muted: '#66806f', text: '#173b28', wash: '#f4f8f4'};
+let productPanelOpener = null;
+const isoDay = iso => new Date(`${iso}T00:00:00`);
+const shortDate = iso => isoDay(iso).toLocaleDateString('en-IN', {day: 'numeric', month: 'short'});
+const addDays = (day, count) => { const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + count); return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`; };
+function niceStep(max, count) {
+  const raw = max / count;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 2.5, 5, 10].map(multiple => multiple * power).find(step => step >= raw);
+}
+function productLink(name, sku, city, scope) {
+  return `<a href="#" class="product-link" data-sku="${escapeHtml(sku)}" data-city="${escapeHtml(city)}" data-scope="${scope}">${escapeHtml(name || sku)}</a>`;
+}
+function productChart(product) {
+  const W = 540, H = 280, m = {left: 46, right: 16, top: 40, bottom: 26};
+  const history = product.history, forecast = product.forecast;
+  const base = isoDay(history.length ? history[0].date : product.today);
+  const index = iso => Math.round((isoDay(iso) - base) / 86400000);
+  const todayIndex = index(product.today);
+  const lastIndex = index(forecast[forecast.length - 1].date);
+  const plotW = W - m.left - m.right, plotH = H - m.top - m.bottom;
+  const x = i => m.left + (i / Math.max(1, lastIndex)) * plotW;
+  const dayW = plotW / Math.max(1, lastIndex);
+  const seriesMax = Math.max(1, ...history.map(h => Math.max(h.units_sold, h.true_demand ?? 0)), ...forecast.map(f => f.units ?? 0));
+  const stock = product.stock.units;
+  const stockOnScale = stock <= seriesMax * 3;
+  const top = Math.max(seriesMax, stockOnScale ? stock : 0) * 1.08;
+  const step = niceStep(top, 4);
+  const yMax = Math.ceil(top / step) * step;
+  const y = value => m.top + plotH - (value / yMax) * plotH;
+  const compact = value => value >= 1000 ? `${(value / 1000).toFixed(value % 1000 ? 1 : 0)}K` : String(value);
+  const path = points => points.map(([i, v], k) => `${k ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  const parts = [];
+  parts.push(`<rect x="${x(todayIndex)}" y="${m.top}" width="${x(lastIndex) - x(todayIndex) + dayW / 2}" height="${plotH}" fill="${CHART_COLORS.wash}"/>`);
+  parts.push(`<text x="${x(lastIndex)}" y="${m.top + 12}" text-anchor="end" font-size="9" fill="${CHART_COLORS.muted}">Forecast</text>`);
+  for (let value = 0; value <= yMax + 1e-9; value += step) {
+    parts.push(`<line x1="${m.left}" x2="${W - m.right}" y1="${y(value)}" y2="${y(value)}" stroke="${CHART_COLORS.grid}" stroke-width="1"/>`);
+    parts.push(`<text x="${m.left - 6}" y="${y(value) + 3}" text-anchor="end" font-size="9" fill="${CHART_COLORS.muted}">${compact(value)}</text>`);
+  }
+  history.forEach(h => { if (h.stockout) parts.push(`<rect x="${x(index(h.date)) - dayW / 2}" y="${m.top}" width="${dayW}" height="${plotH}" fill="${CHART_COLORS.stockout}" fill-opacity="0.14"><title>Stockout day ${escapeHtml(shortDate(h.date))} (simulated)</title></rect>`); });
+  product.festivals.forEach((festival, k) => {
+    const fx = x(index(festival.date));
+    const labelY = m.top - 8 - (k % 2) * 11;
+    const anchor = fx > W - 90 ? 'end' : fx < m.left + 60 ? 'start' : 'middle';
+    parts.push(`<line x1="${fx}" x2="${fx}" y1="${labelY + 3}" y2="${m.top + plotH}" stroke="${CHART_COLORS.muted}" stroke-width="1" stroke-opacity="0.55"/>`);
+    parts.push(`<text x="${fx}" y="${labelY}" text-anchor="${anchor}" font-size="9" fill="${CHART_COLORS.text}">${escapeHtml(festival.name)}</text>`);
+  });
+  const stockY = stockOnScale ? y(stock) : m.top;
+  parts.push(`<line x1="${m.left}" x2="${W - m.right}" y1="${stockY}" y2="${stockY}" stroke="${CHART_COLORS.text}" stroke-width="1" stroke-opacity="0.7"/>`);
+  parts.push(`<text x="${m.left + 4}" y="${stockY - 4}" font-size="9" fill="${CHART_COLORS.text}">${stockOnScale ? '' : '↑ '}Stock ${stock.toLocaleString('en-IN')} units (simulated)${stockOnScale ? '' : ', off scale'}</text>`);
+  if (history.length) {
+    parts.push(`<path d="${path(history.filter(h => h.true_demand != null).map(h => [index(h.date), h.true_demand]))}" fill="none" stroke="${CHART_COLORS.demand}" stroke-width="2" stroke-dasharray="0.1 4" stroke-linecap="round" stroke-linejoin="round"/>`);
+    parts.push(`<path d="${path(history.map(h => [index(h.date), h.units_sold]))}" fill="none" stroke="${CHART_COLORS.sold}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`);
+  }
+  const last = history[history.length - 1];
+  const forecastPoints = (last ? [[todayIndex, last.true_demand ?? last.units_sold]] : []).concat(forecast.map(f => [index(f.date), f.units]));
+  parts.push(`<path d="${path(forecastPoints)}" fill="none" stroke="${CHART_COLORS.demand}" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"/>`);
+  const end = forecast[forecast.length - 1];
+  parts.push(`<circle cx="${x(index(end.date))}" cy="${y(end.units)}" r="4" fill="${CHART_COLORS.demand}" stroke="#fff" stroke-width="2"/>`);
+  const ticks = [];
+  for (let i = 0; i <= lastIndex; i += history.length ? 14 : 1) ticks.push(i);
+  ticks.forEach(i => {
+    const label = shortDate(addDays(base, i));
+    parts.push(`<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="${CHART_COLORS.muted}">${label}</text>`);
+  });
+  parts.push(`<line x1="${x(todayIndex)}" x2="${x(todayIndex)}" y1="${m.top}" y2="${m.top + plotH}" stroke="${CHART_COLORS.text}" stroke-width="1" stroke-opacity="0.35"/>`);
+  const nearLeft = todayIndex < 3;
+  parts.push(`<text x="${x(todayIndex) + (nearLeft ? 4 : -4)}" y="${m.top + plotH - 5}" text-anchor="${nearLeft ? 'start' : 'end'}" font-size="9" fill="${CHART_COLORS.muted}">Today</text>`);
+  parts.push(`<line class="crosshair" x1="0" x2="0" y1="${m.top}" y2="${m.top + plotH}" stroke="${CHART_COLORS.text}" stroke-width="1" visibility="hidden"/>`);
+  parts.push(`<rect class="hit" x="${m.left - dayW / 2}" y="${m.top}" width="${plotW + dayW}" height="${plotH}" fill="transparent"/>`);
+  return {svg: `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Daily units for ${escapeHtml(product.details.product_name)}: last ${history.length} days and ${forecast.length}-day forecast">${parts.join('')}</svg>`, x, index, dayW, W, m, lastIndex, base};
+}
+function chartRows(product) {
+  const rows = new Map();
+  product.history.forEach(h => rows.set(h.date, {date: h.date, sold: h.units_sold, demand: h.true_demand, stockout: h.stockout}));
+  product.forecast.forEach(f => rows.set(f.date, {...(rows.get(f.date) || {date: f.date}), forecast: f.units}));
+  product.festivals.forEach(f => { if (rows.has(f.date)) rows.get(f.date).festival = f.name; });
+  return [...rows.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+function attachChartHover(container, chart, product) {
+  const byIndex = new Map(chartRows(product).map(row => [chart.index(row.date), row]));
+  const svg = container.querySelector('svg');
+  const crosshair = svg.querySelector('.crosshair');
+  const tooltip = container.querySelector('.chart-tooltip');
+  const hide = () => { crosshair.setAttribute('visibility', 'hidden'); tooltip.hidden = true; };
+  svg.querySelector('.hit').addEventListener('pointermove', event => {
+    const box = svg.getBoundingClientRect();
+    const px = (event.clientX - box.left) * chart.W / box.width;
+    const i = Math.max(0, Math.min(chart.lastIndex, Math.round((px - chart.m.left) / chart.dayW)));
+    const row = byIndex.get(i);
+    if (!row) return hide();
+    crosshair.setAttribute('x1', chart.x(i)); crosshair.setAttribute('x2', chart.x(i)); crosshair.setAttribute('visibility', 'visible');
+    tooltip.replaceChildren();
+    const line = (value, label, color, dash) => {
+      const item = document.createElement('div');
+      if (color) { const key = document.createElement('span'); key.className = `key ${dash || ''}`; key.style.borderColor = color; item.append(key); }
+      const strong = document.createElement('strong'); strong.textContent = value; item.append(strong, ` ${label}`);
+      tooltip.append(item);
+    };
+    const title = document.createElement('div'); title.className = 'tip-date'; title.textContent = shortDate(row.date); tooltip.append(title);
+    if (row.sold != null) line(row.sold.toLocaleString('en-IN'), 'units sold (simulated)', CHART_COLORS.sold);
+    if (row.demand != null) line(row.demand.toLocaleString('en-IN'), 'true demand (simulated)', CHART_COLORS.demand, 'dotted');
+    if (row.forecast != null) line(row.forecast.toLocaleString('en-IN'), 'forecast', CHART_COLORS.demand, 'dashed');
+    if (row.stockout) line('Stockout', 'day (simulated)');
+    if (row.festival) line(row.festival, '');
+    tooltip.hidden = false;
+    const left = (chart.x(i) / chart.W) * box.width;
+    tooltip.style.left = `${Math.min(Math.max(left + 12, 0), box.width - 190)}px`;
+  });
+  svg.querySelector('.hit').addEventListener('pointerleave', hide);
+}
+function legendItem(label, color, kind) {
+  const mark = kind === 'area' ? `<span class="swatch" style="background:${color}"></span>` : `<span class="key ${kind || ''}" style="border-color:${color}"></span>`;
+  return `<span class="legend-item">${mark}${escapeHtml(label)}</span>`;
+}
+function renderProductPanel(product) {
+  const d = product.details;
+  const tracked = product.history.length > 0;
+  const chart = productChart(product);
+  const fmtNumber = (value, digits = 0) => value == null ? '–' : Number(value).toLocaleString('en-IN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+  const facts = [
+    ['Brand', escapeHtml(d.brand || '–')], ['Category', escapeHtml(d.category || '–')], ['MRP', d.price == null ? '–' : `₹${fmtNumber(d.price, 2)}`],
+    ['Stock (simulated)', `${fmtNumber(product.stock.units)} units on ${escapeHtml(shortDate(product.stock.date))}`],
+    ['Days of cover', `<span class="${d.risk_status === 'stockout' ? 'risk' : ''}">${fmtNumber(d.days_of_cover, 1)} days · ${escapeHtml(d.risk_status)}</span>`],
+    ['Next delivery', `in ${fmtNumber(d.days_until_delivery)} day${d.days_until_delivery === 1 ? '' : 's'}`], ['Reorder qty', `${fmtNumber(d.reorder_qty)} units`],
+    ['Daily forecast (used for risk)', `${fmtNumber(d.forecast_daily, 1)} units`],
+    ['Forecast source', d.forecast_source === 'lightgbm_direct' ? 'direct (LightGBM)' : 'analog (no history)'],
+  ];
+  const legend = [
+    tracked ? legendItem('Units sold (simulated)', CHART_COLORS.sold) : '',
+    tracked ? legendItem('True demand (simulated)', CHART_COLORS.demand, 'dotted') : '',
+    legendItem(tracked ? '7-day forecast' : '7-day forecast (analog average, flat)', CHART_COLORS.demand, 'dashed'),
+    tracked ? legendItem('Stockout day (simulated)', CHART_COLORS.stockout, 'area') : '',
+    legendItem('Stock (simulated)', CHART_COLORS.text), product.festivals.length ? legendItem('Festival', CHART_COLORS.muted) : '',
+  ].join('');
+  const analogs = product.analogs.length ? `<h3>Built from ${product.analogs.length} analog products</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Weight</th><th>Price factor</th><th>Its forecast/day</th></tr></thead><tbody>${product.analogs.map(a => `<tr><td>${productLink(a.product_name, a.sku_id, product.city, 'regional')}</td><td>${(a.weight * 100).toFixed(1)}%</td><td>×${a.price_adjustment.toFixed(2)}</td><td>${fmtNumber(a.forecast_daily, 1)}</td></tr>`).join('')}</tbody></table></div><p class="subhead">Forecast = Σ weight × price factor × analog forecast (estimated). Weights are normalised inverse distances on price, pack size and brand popularity.</p>` : '';
+  const rows = chartRows(product);
+  const table = `<details class="chart-table"><summary>Data table</summary><div class="table-wrap"><table><thead><tr><th>Date</th><th>Units sold</th><th>True demand</th><th>Forecast</th><th>Stockout</th><th>Festival</th></tr></thead><tbody>${rows.map(row => `<tr><td>${escapeHtml(row.date)}</td><td>${fmtNumber(row.sold)}</td><td>${fmtNumber(row.demand, 1)}</td><td>${fmtNumber(row.forecast, 1)}</td><td>${row.stockout ? 'yes' : ''}</td><td>${escapeHtml(row.festival || '')}</td></tr>`).join('')}</tbody></table></div></details>`;
+  document.getElementById('product-panel-title').textContent = d.product_name;
+  document.getElementById('product-panel-body').innerHTML = `<div class="subhead">${escapeHtml(product.city)} · ${escapeHtml(product.sku_id)} · ${product.scope === 'model' ? 'model risk report' : 'regional report'} · today ${escapeHtml(shortDate(product.today))}</div>
+    <div class="product-layout"><div><div class="chart-legend">${legend}</div><div class="chart-box">${chart.svg}<div class="chart-tooltip" hidden></div></div></div>
+    <dl class="product-facts">${facts.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join('')}</dl></div>
+    ${analogs}${table}<p class="subhead">${product.notes.map(escapeHtml).join(' ')}</p>`;
+  attachChartHover(document.querySelector('#product-panel-body .chart-box'), chart, product);
+}
+async function openProductPanel(sku, city, scope, opener) {
+  const panel = document.getElementById('product-panel');
+  productPanelOpener = opener || productPanelOpener;
+  openProduct = {sku, city, scope};
+  saveUrlState();
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+  document.getElementById('product-panel-title').textContent = 'Loading…';
+  document.getElementById('product-panel-body').innerHTML = '';
+  document.getElementById('product-panel-close').focus();
+  const response = await fetch(`/api/product?${new URLSearchParams({sku_id: sku, city, scope})}`);
+  const payload = await response.json();
+  if (!response.ok) { document.getElementById('product-panel-title').textContent = payload.error || 'Unable to load product'; return; }
+  renderProductPanel(payload);
+}
+function closeProductPanel() {
+  const panel = document.getElementById('product-panel');
+  if (!panel.classList.contains('open')) return;
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  openProduct = null;
+  saveUrlState();
+  if (productPanelOpener) productPanelOpener.focus();
+  productPanelOpener = null;
+}
+document.addEventListener('click', event => {
+  const link = event.target.closest('.product-link');
+  if (!link) return;
+  event.preventDefault();
+  openProductPanel(link.dataset.sku, link.dataset.city, link.dataset.scope, link).catch(error => showToast(error.message, true));
+});
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeProductPanel(); });
+document.getElementById('product-panel-close').addEventListener('click', closeProductPanel);
 async function load() {
   const isAdmin = document.body.classList.contains('admin-page');
   if (!isAdmin) {
@@ -850,6 +1037,7 @@ async function load() {
   createStockoutView('m', 'model', 'model-view', `Tracked products, stock counted on {day}. ${simulated} Trend = last 28 days vs the 28 before.`);
   createStockoutView('r', 'regional', 'regional-view', `Full catalog, stock simulated for {day}. ${simulated} Catalog products without sales history show their forecast instead.`);
   refreshStockoutViews();
+  if (openProduct) openProductPanel(openProduct.sku, openProduct.city, openProduct.scope).catch(error => showToast(error.message, true));
   await loadDashboard(selectedRegion);
   regionalData = await (await fetch('/api/regional-intelligence')).json();
   renderRegional();
@@ -927,7 +1115,7 @@ function renderModelRisk() {
   const emptyRow = columns => `<tr><td colspan="${columns}" class="empty">None today</td></tr>`;
   const overstock = [...data.overstock].sort((a, b) => b.days_of_cover - a.days_of_cover).slice(0, 15);
   document.getElementById('model-risk-scope').textContent = data.latest ? `${data.city === 'all' ? 'All cities' : selectedRegion} · ${data.latest}` : '';
-  document.getElementById('model-overstock').innerHTML = overstock.map(row => `<tr><td>${escapeHtml(row.product_name || row.sku_id)}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.shelf_life_days)} days</td></tr>`).join('') || emptyRow(4);
+  document.getElementById('model-overstock').innerHTML = overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'model')}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.shelf_life_days)} days</td></tr>`).join('') || emptyRow(4);
 }
 load().catch(error => {
   console.error('Failed to load dashboard data:', error);
@@ -1090,6 +1278,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/api/product":
+            params = {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()}
+            try:
+                payload = product_detail.product_detail(params.get("city", ""), params.get("sku_id", ""),
+                                                        params.get("scope", "regional"))
+            except product_detail.ProductNotFound:
+                self.send_json_not_found("Product not found", params.get("sku_id", ""))
+                return
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            except FileNotFoundError as error:
+                self.send_json(503, {"error": f"{Path(error.filename).name} not generated; run run_pipeline.py"})
+                return
+            self.send_json(200, payload)
             return
         if path in {"/api/stockout", "/api/stockout/brands"}:
             self.send_stockout(path, {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()})

@@ -46,14 +46,14 @@ SORT_COLUMNS = {
 }
 COLUMNS = [
     "city", "sku_id", "product_name", "brand", "category", "price", "units_7d", "units_28d",
-    "avg_daily_sales", "trend_pct", "forecast_daily", "days_of_cover", "days_until_delivery",
+    "avg_daily_sales", "trend_pct", "forecast_daily", "opening_stock", "days_of_cover", "days_until_delivery",
     "reorder_qty", "risk_status", "forecast_source", "has_history", "seller_rank_pct",
     "pack_size_value", "pack_size_unit",
 ]
 EXPORT_COLUMNS = [col for col in COLUMNS if col not in {"seller_rank_pct", "pack_size_value", "pack_size_unit"}]
 
 _TABLES = {}
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 
 
 def product_key(row):
@@ -117,7 +117,8 @@ def finish(table, planning_day):
     return table
 
 
-def model_table():
+def model_rows():
+    """Every tracked product x city on the latest test-window day, before de-duplication; and that day."""
     from train_model import build_risk_report  # heavy imports (lightgbm, optuna), so only on first use
 
     scored = pd.read_csv(OUTPUTS_DIR / "test_predictions.csv", parse_dates=["date"])
@@ -129,27 +130,36 @@ def model_table():
     table = rows.merge(products, on="sku_id", how="left").rename(
         columns={"mrp": "price", "avg_daily_pred": "forecast_daily"})
     table["forecast_source"] = DIRECT
-    return finish(table, latest)
+    return table, latest
 
 
-def regional_table():
+def regional_rows():
+    """Every forecast catalog product x city, before de-duplication; and the planning day."""
     inventory = pd.read_csv(
         DATA_DIR / "bigbasket_regional_inventory.csv", dtype={"pack_size_value": str},
         usecols=["region", "sku_id", "product_name", "brand", "pack_size_value", "pack_size_unit", "category",
-                 "price", "forecast_daily", "forecast_source", "days_of_cover", "days_until_delivery",
-                 "reorder_qty", "risk_status"])
+                 "price", "forecast_daily", "forecast_source", "analog_ids", "analog_weights", "analog_price_adj",
+                 "opening_stock", "days_of_cover", "days_until_delivery", "reorder_qty", "risk_status"])
     # stock is simulated for the morning of the first forecast day
     start = pd.read_csv(DATA_DIR / "bigbasket_regional_forecast.csv", usecols=["forecast_start"], nrows=1)
-    return finish(inventory.rename(columns={"region": "city"}), start["forecast_start"].iloc[0])
+    return inventory.rename(columns={"region": "city"}), pd.Timestamp(start["forecast_start"].iloc[0])
 
 
-def table_for(scope):
-    """The merged table for a scope, built once and kept in memory."""
+def raw_rows(scope):
+    """(rows, planning day) for a scope before de-duplication, built once and kept in memory."""
     if scope not in SCOPES:
         raise ValueError(f"scope must be one of {', '.join(SCOPES)}")
     with _LOCK:
+        if ("raw", scope) not in _TABLES:
+            _TABLES["raw", scope] = model_rows() if scope == "model" else regional_rows()
+        return _TABLES["raw", scope]
+
+
+def table_for(scope):
+    """The merged, de-duplicated table for a scope, built once and kept in memory."""
+    with _LOCK:
         if scope not in _TABLES:
-            _TABLES[scope] = model_table() if scope == "model" else regional_table()
+            _TABLES[scope] = finish(*raw_rows(scope))
         return _TABLES[scope]
 
 
