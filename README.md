@@ -37,10 +37,11 @@ BigBasket catalog (data/archive_products.csv)
 | `src/train_model.py` | Time-series CV, Optuna tuning, final-test evaluation, model risk report |
 | `src/forecast_regional.py` | Catalog-wide forecasts per city; free samples, store packaging and sub-₹1 products listed in `data/bigbasket_not_forecast.csv` |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
+| `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
 | `src/alerts.py` | Per-city vendor email alerts from the model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -163,6 +164,61 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
 
 `outputs/metrics.json` has every number above plus MAE, RMSE and the tuned
 parameters.
+
+## Model comparison
+
+`src/compare_models.py` is a separate study that checks whether LightGBM is
+the right choice. It never touches `models/` or the production outputs. For
+each segment it scores these models on the same features, the same
+`demand` target, the same 4 CV folds (7-day gap) and the same final test
+window as `train_model.py`:
+
+| Model | What it is |
+|---|---|
+| Seasonal naive | `lag_7`: same weekday one week back, the latest value the 7-day lead time allows |
+| Moving average 28d | `roll_mean_28_lag7`: 28-day mean ending 7 days back |
+| XGBoost | `reg:tweedie`, native categorical splits |
+| CatBoost | `Tweedie:variance_power=p`, native categorical features |
+| LightGBM | `tweedie`, native categorical features (the production search space) |
+
+Each ML model runs twice:
+- **default**: library defaults, with only the Tweedie objective set. CatBoost
+  requires a variance power, so it gets 1.5, which is the LightGBM and
+  XGBoost default.
+- **tuned**: Optuna TPE with the same budget (`--trials`, default 40), the
+  same seed, the same objective (mean CV WAPE) and the same early stopping
+  (50 rounds on validation MAE, up to 3000 trees). The Tweedie power is
+  searched over [1.1, 1.6] for all three models, and the other ranges match
+  wherever the parameters mean the same thing. CatBoost early-stops on MAE of
+  exp(raw prediction): its built-in MAE compares the log-scale value with the
+  target under a Tweedie loss.
+
+The reported CV WAPE re-scores the chosen parameters on every fold with a
+fixed number of trees, so default and tuned settings are scored the same way.
+The risk-level scores (accuracy, stockout recall/precision/F1, macro F1) use
+the delivery-aware rule and 7-day forward window from
+`risk_confusion_matrix.py`. `tests/test_compare_models.py` checks that every
+model is fitted and scored on identical folds and the identical test window.
+
+```bash
+python src/compare_models.py --trials 40                  # full study
+python src/compare_models.py --trials 2 --max-series 20   # ~3-minute smoke test
+```
+
+Outputs: `outputs/model_comparison.csv` / `.json` and charts in
+`outputs/comparison/` (`wape_by_model.png`, `cv_wape_by_fold.png`,
+`training_time.png`). A `--max-series` run writes to
+`outputs/comparison_sample/` instead. The script ends by listing every metric
+on which another model beats tuned LightGBM.
+
+**Run time:** almost all of it is tuning, and CatBoost dominates. Measured on a
+10-core Mac, one perishable trial (4 early-stopped folds) takes about 15–45 s
+for LightGBM or XGBoost and 250–430 s for CatBoost. Non-perishable is about
+3× the data. That works out to roughly 25 minutes per trial across all
+models and both segments, plus about an hour of fixed work, so
+`--trials 40` is about 17 hours, `--trials 10` about 5 hours and
+`--trials 5` about 3 hours. Every model gets the same `--trials`, so a
+smaller budget stays fair.
 
 ## Key design choices
 

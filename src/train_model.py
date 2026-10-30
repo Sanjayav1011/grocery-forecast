@@ -164,6 +164,21 @@ def split_final(df):
     return df[df["date"] < start], df[(df["date"] >= start) & (df["date"] <= end)]
 
 
+def score_final_test(test, pred_col, scale):
+    """Metric block for the whole test window, festival weeks and stockout days."""
+    slices = {
+        "overall": test,
+        "festival_weeks": test[test["is_festival_week"] == 1],
+        "stockout_days": test[test["stockout_flag"] == 1],
+    }
+    final_test = {}
+    for slice_name, rows in slices.items():
+        final_test[slice_name] = {"n_rows": len(rows), **evaluate(rows[TARGET], rows[pred_col], scale)}
+        if "true_demand" in rows.columns:  # synthetic data only
+            final_test[slice_name]["WAPE_vs_true_demand_%"] = round(wape(rows["true_demand"], rows[pred_col]), 2)
+    return final_test
+
+
 def train_segment(df, segment_name, n_trials):
     # Tuning and the baseline only ever see data before FINAL_TEST; the
     # final model is refit on all of that data with the tuned params.
@@ -189,17 +204,7 @@ def train_segment(df, segment_name, n_trials):
 
     test = test.copy()
     test["predicted_units"] = np.clip(model.predict(test[FEATURE_COLS]), 0, None)
-    scale = seasonal_naive_scale(train, TARGET, SERIES_COLS)
-    slices = {
-        "overall": test,
-        "festival_weeks": test[test["is_festival_week"] == 1],
-        "stockout_days": test[test["stockout_flag"] == 1],
-    }
-    final_test = {}
-    for slice_name, rows in slices.items():
-        final_test[slice_name] = {"n_rows": len(rows), **evaluate(rows[TARGET], rows["predicted_units"], scale)}
-        if "true_demand" in rows.columns:  # synthetic data only
-            final_test[slice_name]["WAPE_vs_true_demand_%"] = round(wape(rows["true_demand"], rows["predicted_units"]), 2)
+    final_test = score_final_test(test, "predicted_units", seasonal_naive_scale(train, TARGET, SERIES_COLS))
     by_category = {category: round(wape(rows[TARGET], rows["predicted_units"]), 2)
                    for category, rows in test.groupby("category")}
     metrics = {
