@@ -492,6 +492,13 @@ Two of these are upper bounds:
 
 It is large because the simulator occasionally over-orders 3–5×
 (5% of deliveries) on sweets and dairy, which keep for 3–4 days.
+All 709 caught cycles are dairy or sweets. Their delivery cycle equals the
+shelf life, so each cycle holds a new batch, and the previous one is
+written off when it arrives. Thirty-one caught cycles directly follow
+another caught cycle of the same product. In every one, the leftover stock
+was written off the evening before and a new over-ordered batch arrived, so
+no stock is counted twice. Stockout cycles cover different days until each
+delivery, so their lost sales don't overlap either.
 
 **Serving date** (stock counted 30 Oct), planning estimates:
 - **₹ at risk this week:** for today's stockout products in the model risk
@@ -790,8 +797,13 @@ smaller budget stays fair.
 - **Unconstrained demand target.** Sales on stockout days are capped by
   stock. The target `demand` replaces them with a trailing 14-day baseline of
   festival-adjusted, non-stockout sales times today's festival uplift, so the
-  model learns what customers wanted, not what was on the shelf. On stockout
-  days it recovers ~98% of true demand (censored sales: ~45%).
+  model learns what customers wanted, not what was on the shelf. On the
+  44,626 stockout days of the evaluation history (26 Aug 2021–25 Aug 2026,
+  all tracked product × city series), the rebuilt target sums to 97.9% of
+  true demand, against 43.5% for censored sales. The share is Σ target ÷
+  Σ true demand over those days. `build_features.py` prints the same share
+  over all POS data to the serving date (48,849 stockout days): 97.9% and
+  42.3%. The extension after 25 Aug alone gives 97.5% and 32.3%.
 - **Tweedie LightGBM, tuned per segment.** Perishable and non-perishable
   models are tuned separately with Optuna (TPE, 120 trials each) on mean CV
   WAPE, with early stopping on each fold. CV uses four expanding windows with
