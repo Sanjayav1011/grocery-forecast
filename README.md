@@ -21,7 +21,10 @@ stock levels are synthetic** — see [Limitations](#limitations).
   - Stockout views with filters (city, category, brand, price range,
     top sellers, sales trend, cover, forecast source, name search),
     sorting, a by-brand summary and CSV download.
-  - Overstock tables with the suggested action ("Reduce orders").
+  - Overstock tables with a concrete suggested action and its numbers: move
+    units to a city short of the same product, a discount that sells the
+    stock before it expires, or reduce the next order (estimate, simulated
+    stock).
   - Product panel: 60 days of history, the 7-day forecast, festivals, stock
     and analogs.
   - "Why this forecast?" from LightGBM SHAP values, and a "What drives demand"
@@ -77,6 +80,7 @@ BigBasket catalog (data/archive_products.csv)
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
 | `src/festival_readiness.py` | Festival readiness per product × city: festival-week demand vs stock and regular deliveries, shortfall, order-by date, status |
 | `src/serving_risk_report.py` | Model risk report for the serving date: tracked products, stock on the first forecast day vs the next 7 days of forecast |
+| `src/actions.py` | Suggested action per overstock product × city: transfer to a short city, smallest discount that clears the stock, or reduce the next order |
 | `src/alerts.py` | Per-city vendor email alerts from the serving model risk report (dry run by default) |
 | `config/vendors.json` | Vendor name and email(s) per city, optional per-category overrides |
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
@@ -84,7 +88,7 @@ BigBasket catalog (data/archive_products.csv)
 | `src/impact.py` | Estimated business impact per city: ₹ sales protected / missed, spoilage avoided, false-alarm cost (evaluation window) and ₹ at risk this week / Diwali value at risk (serving) |
 | `src/explain_forecast.py` | Forecast explanations from LightGBM SHAP (`pred_contrib`): per-product drivers in units/day (`/api/explain`) and global importance charts |
 | `dashboard.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py`, `tests/test_impact.py` | pytest checks |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py`, `tests/test_impact.py`, `tests/test_actions.py` | pytest checks |
 
 Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
 
@@ -238,6 +242,8 @@ Click any product name in the risk tables (model report, regional
 stockout and overstock, highest demand) to open a side panel for that
 product in the selected city. Esc or × closes it. The panel is also in the
 URL (`product`, `product_city`, `product_scope`), so it can be bookmarked.
+For an overstock product, the facts list also shows the suggested action
+and its numbers (see [Overstock actions](#overstock-actions-admin)).
 
 The chart is inline SVG with no chart library, one y-axis in units per day.
 Hovering shows a crosshair and the values for that day, and a "Data table"
@@ -364,6 +370,51 @@ GET /api/explain/importance -> {window, note, segments: {perishable|nonperishabl
 ```
 
 An unknown city or SKU returns a 404 JSON error.
+
+### Overstock actions (admin)
+
+`src/actions.py` gives every overstock product × city at the serving date a
+suggested action with its numbers. The overstock tables (model risk report
+and regional), the product panel and the vendor email's OVERSTOCK section
+show it, labelled **Estimate · simulated stock**. It does not change the risk
+rule, the forecasts or the models.
+
+- **Excess** = stock − forecast demand over the sell window. The sell window
+  is the shelf life for perishables (dairy 3 days, sweets 4 days). For other
+  categories it is the overstock threshold (7 + 2 + shelf life).
+- **a) Transfer first.** This applies when the same SKU is short in another
+  city of the same scope, either at stockout risk (short by its reorder qty)
+  or "Order now" in the next festival's readiness (short by its shortfall).
+  When a city is short both ways, the larger figure counts. The action reads
+  "Move N units to <city>", with N = min(excess here, shortfall there). Within
+  each SKU, the largest excess goes first, to the city with the largest
+  shortfall still open. Filled shortfalls shrink, and no transfer is larger
+  than the excess.
+- **b) Otherwise discount.** The suggestion is the smallest discount (5%
+  steps, up to 40%) at which the stock sells within the sell window. Demand
+  is scaled by (1 − discount)^−0.7, the `PRICE_ELASTICITY` the synthetic
+  demand and the analog forecasts use. The action reads, for example, "20%
+  off for 4 days", where the days are how long the discounted rate takes to
+  sell the stock.
+- **c) Otherwise reduce the order.** When 40% off is not enough, the detail
+  starts "Discount alone won't clear it" and the action is "Reduce next order
+  by N units", with N = the excess.
+
+On 30 Oct (serving date), the counts are as follows. Every overstock is dairy
+or sweets.
+
+| City | Model report: transfer / discount / reduce | Regional: transfer / discount / reduce |
+|---|---|---|
+| Bengaluru | 3 / 0 / 1 | 0 / 0 / 1 |
+| Chennai | 2 / 0 / 1 | 3 / 0 / 1 |
+| Delhi | 4 / 0 / 1 | 4 / 0 / 1 |
+| Mumbai | 1 / 0 / 1 | 11 / 0 / 3 |
+
+No discount is suggested at the serving date. These products hold 15–31 days
+of cover against a 3–4 day shelf life, so they would need 5–10× normal sales.
+At an elasticity of 0.7, 40% off lifts demand only 1.43×. Every transfer
+fills a Diwali "Order now" shortfall; there is no stockout of the same SKU in
+another city.
 
 ### Business impact (admin)
 
@@ -520,7 +571,9 @@ rule.
 
 Each email has the subject `[Stockout x | Overstock y] <City> inventory alert – <date>`,
 summary counts, a STOCKOUT table sorted by days of cover (top 25), an
-OVERSTOCK table (top 15), and every row of the city's list attached as CSV.
+OVERSTOCK table (top 15) with the suggested action and its numbers
+(`src/actions.py`, labelled "Estimate · simulated stock"; see
+[Overstock actions](#overstock-actions-admin)), and every row of the city's list attached as CSV.
 When a festival with measured uplifts is within 21 days of the serving
 date, the email also has a "Festival readiness: <festival> – order now"
 section. It lists the top 25 "Order now" rows by value at risk (shortfall ×
@@ -769,6 +822,12 @@ smaller budget stays fair.
   training period.
 - **Festival dates** for 2021–2027 were checked against public holiday lists;
   lunar festivals can shift by a day by region. Re-check each year.
+- **Overstock transfers ignore shelf life at the destination.** A transfer
+  fills a festival "Order now" shortfall in the festival week (2–8 Nov for
+  Diwali). Dairy and sweets counted on 30 Oct keep only 3–4 days, so units
+  moved today would expire before that week. Read these transfers as "this
+  city needs the product for Diwali; this city has too much now". Transport
+  cost and time are also not modelled.
 - **Promotions** are assumed off in forecasts, so weeks with planned
   promotions will be under-forecast.
 

@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR, LEAD_TIME_DAYS
+import actions
 import explain_forecast
 import impact
 import festival_readiness
@@ -93,6 +94,14 @@ def not_forecast_count():
     return len(read_csv_from_path(path)) if path.exists() else None
 
 
+def overstock_actions(scope):
+    """{(city, sku_id): suggested overstock action} (src/actions.py); empty when its inputs are missing."""
+    try:
+        return actions.lookup(scope)
+    except (FileNotFoundError, LookupError, ValueError):
+        return {}
+
+
 def regional_intelligence():
     global REGIONAL_INTELLIGENCE_CACHE
     if REGIONAL_INTELLIGENCE_CACHE is not None:
@@ -103,6 +112,7 @@ def regional_intelligence():
     window = [(today + timedelta(days=offset)).isoformat() if today else None for offset in (1, LEAD_TIME_DAYS)]
     result = []
     excluded = not_forecast_count()
+    suggested = overstock_actions("regional") if any(row["risk_status"] == "overstock" for row in rows) else {}
     for region in sorted({row["region"] for row in rows}):
         region_rows = [row for row in rows if row["region"] == region]
         stockout = sorted((row for row in region_rows if row["risk_status"] == "stockout"), key=lambda row: float(row["days_of_cover"]))[:10]
@@ -117,6 +127,8 @@ def regional_intelligence():
         # revenue = 7-day forecast units x MRP; products without an MRP can't rank
         demand_by_revenue = sorted((row for row in products if row["revenue_estimate"] is not None),
                                    key=lambda row: row["revenue_estimate"], reverse=True)[:10]
+        for row in overstock:
+            row["action"] = suggested.get((region, row["sku_id"]))
         for row in stockout:
             row["recommended_restock_units"] = int(row["reorder_qty"])  # shared rule, inventory.classify_risk
         result.append({
@@ -154,6 +166,9 @@ def dashboard_payload(city):
     if city and city != "all":
         stockout = [row for row in stockout if row["city"].casefold() == city]
         overstock = [row for row in overstock if row["city"].casefold() == city]
+    suggested = overstock_actions("model") if overstock else {}
+    for row in overstock:
+        row["action"] = suggested.get((row["city"], row["sku_id"]))
     today = data_date()
     metrics = read_json("metrics.json")
     return {
@@ -486,9 +501,9 @@ PAGE = """<!doctype html>
     <nav class="category-menu customer-only" id="category-menu" aria-label="Shop by category"></nav>
     <section class="hero-banner customer-only"><div class="hero-copy"><div class="hero-kicker">Good food, right on time</div><h2>Freshness for every day</h2><p>Find your everyday favourites, handpicked fresh and delivered straight to your door.</p><a class="hero-cta" href="#catalog">Shop groceries <span>→</span></a></div><div class="hero-art"><img id="hero-product-image" alt="Featured product from our catalog"></div></section>
     <section class="service-strip customer-only" aria-label="Shopping benefits"><div class="service-item"><span class="service-icon">🌿</span><div><strong>Freshly picked</strong><span>Quality essentials for your home</span></div></div><div class="service-item"><span class="service-icon">🚚</span><div><strong>Convenient delivery</strong><span>Choose what works for you</span></div></div><div class="service-item"><span class="service-icon">🛍️</span><div><strong>Everyday favourites</strong><span>All your grocery needs in one place</span></div></div></section>
-    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="demand-title">Highest demand — next 7 days</span> <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast (7 days)</th><th>Est. revenue (7 days)</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="plan-title">Festival planning</span> <span class="rank-toggle" id="plan-rank-toggle"></span></h3><div class="view-toolbar"><select id="plan-festival" aria-label="Festival"></select><span class="view-count" id="plan-uplifts"></span></div><div class="view-caption" id="plan-caption"></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>7-day forecast</th><th>Uplift (category)</th><th>Festival-week units</th><th>Est. revenue</th><th>Category</th></tr></thead><tbody id="plan-body"></tbody></table></div></div><div class="regional-panel stockout-view" style="margin-top:12px"><h3 id="ready-title">Festival readiness</h3><div class="view-tabs" id="ready-tabs"></div><div class="view-toolbar"><select id="ready-status" aria-label="Status"></select><select id="ready-category" aria-label="Category"></select><input id="ready-brand" list="ready-brand-list" placeholder="Brand / company" aria-label="Brand"><datalist id="ready-brand-list"></datalist><button type="button" id="ready-clear">Clear filters</button><a id="ready-download" href="#">Download CSV</a><span class="view-count" id="ready-count"></span></div><div class="view-caption" id="ready-caption"></div><div class="table-wrap"><table><thead id="ready-head"></thead><tbody id="ready-body"></tbody></table></div><div class="view-pager"><button type="button" id="ready-prev">Previous</button><span id="ready-page"></span><button type="button" id="ready-next">Next</button></div></div></section>
+    <section class="regional-intelligence admin-only"><div class="catalog-head"><h2>Regional inventory intelligence</h2><span class="subhead" id="regional-caption">Restock decisions by region</span></div><div class="region-tabs" id="region-tabs"></div><div class="region-summary" id="region-summary"></div><div class="occasion" id="occasion"></div><div class="subhead" id="not-forecast" style="margin:-4px 0 12px"></div><div class="regional-panel"><h3>Stockout risk and recommended restock</h3><div class="stockout-view" id="regional-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Cover</th><th>Suggested action</th><th>Forecast source</th></tr></thead><tbody id="regional-overstock"></tbody></table></div></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="demand-title">Highest demand — next 7 days</span> <span class="rank-toggle" id="rank-toggle"></span></h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Forecast (7 days)</th><th>Est. revenue (7 days)</th><th>Category</th><th>Forecast source</th></tr></thead><tbody id="regional-demand"></tbody></table></div></div><div class="regional-panel" style="margin-top:12px"><h3><span id="plan-title">Festival planning</span> <span class="rank-toggle" id="plan-rank-toggle"></span></h3><div class="view-toolbar"><select id="plan-festival" aria-label="Festival"></select><span class="view-count" id="plan-uplifts"></span></div><div class="view-caption" id="plan-caption"></div><div class="table-wrap"><table><thead><tr><th>Product</th><th>7-day forecast</th><th>Uplift (category)</th><th>Festival-week units</th><th>Est. revenue</th><th>Category</th></tr></thead><tbody id="plan-body"></tbody></table></div></div><div class="regional-panel stockout-view" style="margin-top:12px"><h3 id="ready-title">Festival readiness</h3><div class="view-tabs" id="ready-tabs"></div><div class="view-toolbar"><select id="ready-status" aria-label="Status"></select><select id="ready-category" aria-label="Category"></select><input id="ready-brand" list="ready-brand-list" placeholder="Brand / company" aria-label="Brand"><datalist id="ready-brand-list"></datalist><button type="button" id="ready-clear">Clear filters</button><a id="ready-download" href="#">Download CSV</a><span class="view-count" id="ready-count"></span></div><div class="view-caption" id="ready-caption"></div><div class="table-wrap"><table><thead id="ready-head"></thead><tbody id="ready-body"></tbody></table></div><div class="view-pager"><button type="button" id="ready-prev">Previous</button><span id="ready-page"></span><button type="button" id="ready-next">Next</button></div></div></section>
   <div class="summary admin-only" id="summary"></div>
-    <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
+    <section class="model-risk admin-only"><div class="catalog-head"><h2>Model risk report <span id="model-risk-scope" class="subhead"></span></h2><div class="alert-actions"><button type="button" id="alert-preview">Preview alert</button><button type="button" class="send" id="alert-send">Email vendor</button></div></div><div class="regional-panel"><h3>Stockout risk: reorder before stock runs out</h3><div class="stockout-view" id="model-view"></div></div><div class="regional-columns" style="margin-top:12px"><div class="regional-panel" style="grid-column:1/-1"><h3>Overstock risk: more than can sell before expiry</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Brand</th><th>Cover</th><th>Shelf life</th><th>Suggested action</th></tr></thead><tbody id="model-overstock"></tbody></table></div></div></div></section>
     <section class="model-risk admin-only" id="drivers-card"><div class="catalog-head"><h2>What drives demand <span id="drivers-scope" class="subhead"></span></h2></div><div class="regional-columns"><div class="regional-panel"><h3>Perishable (dairy, sweets)</h3><div class="drivers-chart" id="drivers-perishable"></div></div><div class="regional-panel"><h3>Non-perishable</h3><div class="drivers-chart" id="drivers-nonperishable"></div></div></div><p class="subhead" id="drivers-caption"></p></section>
     <section class="model-risk admin-only" id="impact-card"><div class="catalog-head"><h2>Business impact <span id="impact-scope" class="subhead"></span></h2></div><div class="impact-tiles" id="impact-tiles"></div><div class="regional-panel" style="margin-top:12px"><h3>By city</h3><div class="table-wrap"><table><thead id="impact-head"></thead><tbody id="impact-body"></tbody></table></div></div><p class="subhead" id="impact-caption"></p></section>
     <div class="section-eyebrow customer-only">Picked for your kitchen</div><div class="catalog-head customer-only"><h2>Shop groceries <span id="catalog-count" class="subhead"></span></h2><div class="subhead">Fresh picks for every day</div></div>
@@ -709,7 +724,7 @@ function renderRegional() {
   const inWindow = festival && festival.date <= region.window_end;
   document.getElementById('occasion').textContent = `Data as of ${longDate(region.data_date)}. The forecast covers the next 7 days, ${windowLabel}${inWindow ? `, which include ${festival.name} (${shortDate(festival.date)})` : ''}${festival && !inWindow ? `; the next festival is ${festival.name} on ${shortDate(festival.date)}` : ''}. Festivals further ahead are under Festival planning.`;
   document.getElementById('not-forecast').innerHTML = region.not_forecast_count == null ? '' : `${region.not_forecast_count.toLocaleString()} products not forecast (free samples / no price / packaging) · <a href="${region.not_forecast_download}" style="color:var(--green)">download list</a>`;
-  document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td class="risk">${money(row.days_of_cover)} days</td><td class="safe">Reduce orders</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join('');
+  document.getElementById('regional-overstock').innerHTML = region.overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td class="risk">${money(row.days_of_cover)} days</td>${actionCell(row.action)}<td>${escapeHtml(row.forecast_source)}</td></tr>`).join('');
   document.getElementById('demand-title').textContent = `Highest demand — next 7 days (${windowLabel})`;
   document.getElementById('regional-demand').innerHTML = (rankBy === 'revenue' ? region.demand_by_revenue : region.demand).map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.region, 'regional')}</td><td>${fmt(row.forecast_7d)} units</td><td>${row.revenue_estimate == null ? '–' : `₹${fmt(row.revenue_estimate)} (est.)`}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.forecast_source)}</td></tr>`).join('');
   renderFestivalPlanning().catch(error => console.error(error));
@@ -1015,6 +1030,13 @@ function legendItem(label, color, kind) {
   const mark = kind === 'area' ? `<span class="swatch" style="background:${color}"></span>` : `<span class="key ${kind || ''}" style="border-color:${color}"></span>`;
   return `<span class="legend-item">${mark}${escapeHtml(label)}</span>`;
 }
+// an overstock suggestion from src/actions.py: the action, its numbers and the estimate label
+function actionText(action) {
+  return `<strong>${escapeHtml(action.action)}</strong><div class="subhead">${escapeHtml(action.action_detail)} · ${escapeHtml(action.label)}</div>`;
+}
+function actionCell(action) {
+  return `<td>${action ? actionText(action) : '–'}</td>`;
+}
 function renderProductPanel(product) {
   const d = product.details;
   const tracked = product.history.length > 0;
@@ -1027,6 +1049,7 @@ function renderProductPanel(product) {
     ['Next delivery', `in ${fmtNumber(d.days_until_delivery)} day${d.days_until_delivery === 1 ? '' : 's'}`], ['Reorder qty', `${fmtNumber(d.reorder_qty)} units`],
     ['Daily forecast (used for risk)', `${fmtNumber(d.forecast_daily, 1)} units`],
     ['Forecast source', d.forecast_source === 'lightgbm_direct' ? 'direct (LightGBM)' : 'analog (no history)'],
+    ...(product.action ? [['Suggested action', actionText(product.action)]] : []),
   ];
   const legend = [
     tracked ? legendItem('Units sold (simulated)', CHART_COLORS.sold) : '',
@@ -1376,7 +1399,7 @@ function renderModelRisk() {
   const emptyRow = columns => `<tr><td colspan="${columns}" class="empty">None today</td></tr>`;
   const overstock = [...data.overstock].sort((a, b) => b.days_of_cover - a.days_of_cover).slice(0, 15);
   document.getElementById('model-risk-scope').textContent = data.latest ? `${data.city === 'all' ? 'All cities' : selectedRegion} · stock on ${longDate(data.latest)}, forecast for the next 7 days` : '';
-  document.getElementById('model-overstock').innerHTML = overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'model')}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.shelf_life_days)} days</td></tr>`).join('') || emptyRow(4);
+  document.getElementById('model-overstock').innerHTML = overstock.map(row => `<tr><td>${productLink(row.product_name, row.sku_id, row.city, 'model')}</td><td>${escapeHtml(row.brand)}</td><td class="risk">${cover(row)}</td><td>${escapeHtml(row.shelf_life_days)} days</td>${actionCell(row.action)}</tr>`).join('') || emptyRow(5);
 }
 load().catch(error => {
   console.error('Failed to load dashboard data:', error);

@@ -60,6 +60,7 @@ def fake_project(tmp_path, monkeypatch):
     monkeypatch.setattr(alerts, "VENDORS_PATH", tmp_path / "vendors.json")
     monkeypatch.setattr(alerts, "ENV_PATH", tmp_path / ".env")
     monkeypatch.setattr(alerts, "load_readiness", lambda city: None)  # no festival section unless a test adds one
+    monkeypatch.setattr(alerts, "load_actions", lambda city: {})  # no overstock suggestions unless a test adds them
     return tmp_path
 
 

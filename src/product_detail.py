@@ -18,6 +18,8 @@ from).
              regional), opening stock simulated
   analogs    for analog products: the K tracked products the forecast was built
              from, with normalised inverse-distance weights and price factors
+  action     for overstock rows: the suggested action (transfer / discount /
+             reduce next order) from actions.py, an estimate on simulated stock
   festival_planning  with festival=<name>: the "Festival planning" estimate,
              7-day forecast x the city's measured uplift for the category
              (festival_uplift.py)
@@ -26,6 +28,7 @@ from).
 import numpy as np
 import pandas as pd
 
+import actions
 import festival_uplift
 import stockout_view
 from config import DATA_DIR, LEAD_TIME_DAYS
@@ -137,6 +140,14 @@ def festival_note(city, category, forecast_daily, festival, data_date):
     }
 
 
+def overstock_action(scope, city, sku_id):
+    """The suggested overstock action (actions.py), or None when its inputs are missing."""
+    try:
+        return actions.lookup(scope).get((city, sku_id))
+    except (FileNotFoundError, LookupError, ValueError):
+        return None
+
+
 def product_detail(city, sku_id, scope="regional", festival=""):
     """Everything the product panel shows; ProductNotFound for an unknown city / SKU."""
     rows, stock_day = stockout_view.raw_rows(scope)
@@ -182,6 +193,7 @@ def product_detail(city, sku_id, scope="regional", festival=""):
         "festival_after": {"date": after["date"].iloc[0].date().isoformat(), "name": after["festival_name"].iloc[0]}
                           if not after.empty else None,
         "analogs": analogs,
+        "action": overstock_action(scope, city, sku_id) if row["risk_status"] == "overstock" else None,
         "festival_planning": festival_note(city, row["model_category"] if "model_category" in row else row["category"],
                                            row["forecast_daily"], festival, today) if festival else None,
         "notes": [NOTES["history"]] * tracked + [NOTES["stock"], NOTES["direct" if tracked else "analog"]],
