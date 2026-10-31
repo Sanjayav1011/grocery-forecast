@@ -37,12 +37,21 @@ Then, in order:
                 demand and the analog price adjustment use).
                 "20% off for 4 days": the days the discounted rate needs to
                 sell the stock.
-  c) reduce     otherwise (40% is not enough: "Discount alone won't clear it",
-                with the sales multiple the stock would need vs the ~1.4x that
-                40% off gives). In whole delivery cycles of a normal order
-                (forecast_daily x R): "Skip the next K orders (≈N units excess;
-                a normal order is ~M)", K = floor(N / M); "Reduce next order by
-                N units" when N is less than one normal order.
+  otherwise 40% is not enough: "Discount alone won't clear it", with the
+  sales multiple the stock would need vs the ~1.4x that 40% off gives, and
+  c) write-off  perishables (sell window = shelf life): the excess expires
+                before it can sell, and the delivery cycle equals the shelf
+                life, so skipping a delivery would empty the shelf. "Expected
+                write-off ≈N units (expires before it can sell) · order ~X per
+                delivery instead of ~Y from now on", X = forecast_daily x R
+                (one cycle of forecast demand), Y = recent_avg_order, the
+                average delivery over the last RECENT_ORDER_DAYS days (today
+                included; it includes any over-order). The detail starts with
+                the hint "Mark down or donate before expiry" when N > 0.
+  d) reduce     non-perishables, in whole delivery cycles of a normal order
+                M = forecast_daily x R: "Skip the next K orders (≈N units
+                excess; a normal order is ~M)", K = floor(N / M); "Reduce next
+                order by N units" when N is less than one normal order.
 """
 
 import json
@@ -60,18 +69,25 @@ MAX_DISCOUNT = 0.40
 NO_DISCOUNT = "Discount alone won't clear it"
 TRANSIT_DAYS = 1
 FESTIVAL_WEEK_DAYS = 7  # festival_readiness.FESTIVAL_WEEK_DAYS
-TYPES = ["transfer", "discount", "reduce_order"]
+TYPES = ["transfer", "discount", "write_off", "reduce_order"]
+WRITE_OFF_HINT = "Mark down or donate before expiry"
+RECENT_ORDER_DAYS = 28  # build_bigbasket_regional_risk.WARMUP_DAYS
 COLUMNS = ["city", "sku_id", "excess_units", "sell_window_days", "action_type", "action", "action_detail",
            "shelf_left_days", "transfer_to", "transfer_units", "discount_pct", "discount_days", "reduce_units",
-           "normal_order", "skip_orders"]
+           "normal_order", "skip_orders", "recent_avg_order"]
 _CACHE = {}
+
+
+def is_perishable(category):
+    """Stock that expires within one delivery cycle (dairy, sweets): written off at the next delivery."""
+    return SHELF_LIFE_DAYS[category] <= DELIVERY_CYCLE_DAYS
 
 
 def sell_window(category):
     """Days stock can still sell in: the shelf life (perishables) or the overstock threshold."""
     shelf_life = SHELF_LIFE_DAYS[category]
     # classify_risk's overstock threshold is horizon + 2 + shelf life; the 2 is SAFETY_STOCK_DAYS
-    return shelf_life if shelf_life <= DELIVERY_CYCLE_DAYS else LEAD_TIME_DAYS + SAFETY_STOCK_DAYS + shelf_life
+    return shelf_life if is_perishable(category) else LEAD_TIME_DAYS + SAFETY_STOCK_DAYS + shelf_life
 
 
 def excess_units(stock, daily, window):
@@ -170,6 +186,13 @@ def day_text(offset, counted=None):
     return f"{day.day} {day:%b}"
 
 
+def write_off_text(units, normal_order, recent_order=None):
+    """The perishable action: expected write-off and the right order size from now on."""
+    usual = "" if recent_order is None or pd.isna(recent_order) else f" instead of ~{recent_order:,.0f}"
+    return (f"Expected write-off ≈{units:,} units (expires before it can sell) · "
+            f"order ~{normal_order:,.0f} per delivery{usual} from now on")
+
+
 def blocked_text(shelf_left, blocked, counted=None):
     """e.g. 'Transfer ruled out: stock here is sellable until 1 Nov; Delhi (Diwali “Order now”) needs it sellable on 2 Nov'."""
     needs = "; ".join(f"{city} ({reason}) needs it sellable on {day_text(need_by, counted)}" for city, reason, need_by in blocked)
@@ -198,7 +221,8 @@ def overstock_actions(rows, short, category_col="category", counted=None):
         record = {"city": row["city"], "sku_id": row["sku_id"], "excess_units": math.ceil(excess - 1e-9),
                   "sell_window_days": int(row["sell_window_days"]), "shelf_left_days": int(row["shelf_left"]),
                   "transfer_to": None, "transfer_units": None, "discount_pct": None, "discount_days": None,
-                  "reduce_units": None, "normal_order": round(float(row["normal_order"]), 1), "skip_orders": None}
+                  "reduce_units": None, "normal_order": round(float(row["normal_order"]), 1), "skip_orders": None,
+                  "recent_avg_order": None if pd.isna(row.get("recent_avg_order")) else round(float(row["recent_avg_order"]), 1)}
         window = int(row["sell_window_days"])
         sells = f"{row['forecast_daily']:.1f}/day forecast sells {row['forecast_daily'] * window:,.0f} in {window} days"
         ruled_out = f" · {blocked_text(row['shelf_left'], blocked[index], counted)}" if index in blocked else ""
@@ -216,14 +240,41 @@ def overstock_actions(rows, short, category_col="category", counted=None):
                               action_detail=f"{record['excess_units']:,} excess units ({sells}); demand ×{demand_lift(discount):.2f} at {discount:.0%} off{ruled_out}")
             else:
                 units = record["excess_units"]
-                text, skip = reduce_text(units, row["normal_order"])
                 needed = row["opening_stock"] / max(row["forecast_daily"] * window, 1e-9)
-                when = "before expiry" if window <= DELIVERY_CYCLE_DAYS else f"within {window} days"
-                record.update(action_type="reduce_order", action=text, reduce_units=units, skip_orders=skip,
-                              action_detail=f"{NO_DISCOUNT}: needs ~{multiple(needed)}× normal sales {when}; "
-                                            f"{MAX_DISCOUNT:.0%} off gives ~{demand_lift(MAX_DISCOUNT):.1f}×{ruled_out}")
+                perishable = is_perishable(row[category_col])
+                why = (f"{NO_DISCOUNT}: needs ~{multiple(needed)}× normal sales "
+                       f"{'before expiry' if perishable else f'within {window} days'}; "
+                       f"{MAX_DISCOUNT:.0%} off gives ~{demand_lift(MAX_DISCOUNT):.1f}×{ruled_out}")
+                if perishable:
+                    record.update(action_type="write_off", reduce_units=units,
+                                  action=write_off_text(units, row["normal_order"], row.get("recent_avg_order")),
+                                  action_detail=f"{WRITE_OFF_HINT} · {why}" if units > 0 else why)
+                else:
+                    text, skip = reduce_text(units, row["normal_order"])
+                    record.update(action_type="reduce_order", action=text, reduce_units=units, skip_orders=skip,
+                                  action_detail=why)
         out.append(record)
     return pd.DataFrame(out, columns=COLUMNS)
+
+
+def model_recent_orders(rows, counted):
+    """
+    recent_avg_order for the model scope's perishable rows, from the POS data
+    (data/pos_synthetic.csv) and this morning's stock: the mean stock on
+    delivery mornings (days_until_delivery == the cycle) over the last
+    RECENT_ORDER_DAYS days, today included. Perishable stock is written off at
+    each delivery, so that stock is exactly the delivery.
+    """
+    from config import DATA_DIR
+
+    first = pd.Timestamp(counted) - pd.Timedelta(days=RECENT_ORDER_DAYS - 1)
+    cols = ["date", "city", "sku_id", "category", "opening_stock", "days_until_delivery"]
+    pos = pd.read_csv(DATA_DIR / "pos_synthetic.csv", usecols=cols, parse_dates=["date"])
+    pos = pos[(pos["date"] >= first) & pos["category"].map(is_perishable)]
+    today = rows.loc[rows["category"].map(is_perishable), cols]
+    days = pd.concat([pos, today[today["date"] == pd.Timestamp(counted)]], ignore_index=True)
+    deliveries = days[days["days_until_delivery"] == review_days_for(days["category"])]
+    return deliveries.groupby(["city", "sku_id"])["opening_stock"].mean().rename("recent_avg_order").reset_index()
 
 
 def festival_readiness_rows(cities):
@@ -254,10 +305,16 @@ def scope_actions(scope):
     rows, counted = stockout_view.raw_rows(scope)
     if scope not in _CACHE or _CACHE[scope][0] is not rows:  # rebuilt when stockout_view's table is
         category_col = "model_category" if "model_category" in rows else "category"
+        over = rows
+        if scope == "model" and (rows["risk_status"] == "overstock").any():
+            try:
+                over = rows.merge(model_recent_orders(rows, counted), on=["city", "sku_id"], how="left")
+            except (FileNotFoundError, ValueError):
+                pass
         readiness, festival, week_start = (None, "", None)
         if (rows["risk_status"] == "overstock").any():
             readiness, festival, week_start = festival_readiness_rows(sorted(rows["city"].unique()))
-        _CACHE[scope] = rows, overstock_actions(rows, shortfalls(rows, readiness, festival, week_start), category_col,
+        _CACHE[scope] = rows, overstock_actions(over, shortfalls(rows, readiness, festival, week_start), category_col,
                                                      counted)
     return _CACHE[scope][1]
 

@@ -5,6 +5,7 @@ reduce-order fallback, the vendor email's overstock column, and checks on
 the generated data.
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -82,7 +83,7 @@ def test_freshness_blocks_a_stockout_transfer_the_stock_would_not_survive():
     # after 1 day in transit: shelf left 2 > 1 + 1 fails (needs to be strictly more)
     blocked = suggest(rows(("Delhi", "A", "dairy", 100, 10, "overstock", 0, 2),
                            ("Chennai", "A", "dairy", 1, 10, "stockout", 50, 1))).loc[("Delhi", "A")]
-    assert blocked["action_type"] == "reduce_order" and pd.isna(blocked["transfer_to"])
+    assert blocked["action_type"] == "write_off" and pd.isna(blocked["transfer_to"])
     assert "Transfer ruled out: stock here is sellable until day 1; Chennai (stockout risk) needs it sellable on day 2" in blocked["action_detail"]
     allowed = suggest(rows(("Delhi", "A", "dairy", 100, 10, "overstock", 0, 3),
                            ("Chennai", "A", "dairy", 1, 10, "stockout", 50, 1))).loc[("Delhi", "A")]
@@ -97,7 +98,7 @@ def test_freshness_blocks_order_now_when_stock_expires_before_the_festival_week(
     out = suggest(risk, ready, week_start=3)  # festival week starts on day 3
     assert out.loc[("Mumbai", "A"), "action"] == "Move 160 units to Chennai"  # excess 200 - 10 x 4
     delhi = out.loc[("Delhi", "A")]
-    assert delhi["action_type"] == "reduce_order"
+    assert delhi["action_type"] == "write_off"
     assert "Chennai (Diwali “Order now”) needs it sellable on day 3" in delhi["action_detail"]
     # a fresh, smaller shortfall elsewhere is used instead of the stale, larger one
     risk = rows(("Delhi", "A", "sweets", 200, 10, "overstock", 0, 3),
@@ -116,18 +117,52 @@ def test_no_transfer_when_the_other_city_is_not_short():
     assert (row["action"], row["discount_pct"], row["discount_days"], row["excess_units"]) == ("15% off for 188 days", 15, 188, 210)
 
 
-def test_reduce_order_in_whole_delivery_cycles_when_40pct_off_is_not_enough():
-    row = suggest(rows(("Delhi", "A", "dairy", 100, 10, "overstock", 0))).loc[("Delhi", "A")]
-    # excess 70; a normal order is 10/day x 3-day cycle = 30: 2 whole orders
-    assert (row["action_type"], row["reduce_units"], row["skip_orders"]) == ("reduce_order", 70, 2)
-    assert row["action"] == "Skip the next 2 orders (≈70 units excess; a normal order is ~30)"
-    assert row["action_detail"] == "Discount alone won't clear it: needs ~3.3× normal sales before expiry; 40% off gives ~1.4×"
-    one = suggest(rows(("Delhi", "A", "dairy", 75, 10, "overstock", 0))).loc[("Delhi", "A")]
-    assert one["action"] == "Skip the next order (≈45 units excess; a normal order is ~30)"
-    # less than one normal order: reduce by units
-    small = suggest(rows(("Delhi", "A", "dairy", 50, 10, "overstock", 0))).loc[("Delhi", "A")]
-    assert (small["action"], small["skip_orders"]) == ("Reduce next order by 20 units", 0)
-    assert "needs ~1.7× normal sales before expiry" in small["action_detail"]
+def test_perishable_excess_is_an_expected_write_off_with_the_right_order_size():
+    risk = rows(("Delhi", "A", "dairy", 100, 10, "overstock", 0)).assign(recent_avg_order=50.0)
+    row = suggest(risk).loc[("Delhi", "A")]
+    # excess 100 - 10 x 3 = 70 expires; right order = 10/day x 3-day cycle = 30; recent deliveries averaged 50
+    assert (row["action_type"], row["reduce_units"], row["normal_order"], row["recent_avg_order"]) == ("write_off", 70, 30, 50)
+    assert row["action"] == "Expected write-off ≈70 units (expires before it can sell) · order ~30 per delivery instead of ~50 from now on"
+    assert row["action_detail"] == ("Mark down or donate before expiry · Discount alone won't clear it: "
+                                    "needs ~3.3× normal sales before expiry; 40% off gives ~1.4×")
+    assert pd.isna(row["skip_orders"])  # never "skip orders" for perishables
+    # without an order history (no recent_avg_order), only the right size
+    sweets = suggest(rows(("Delhi", "A", "sweets", 100, 10, "overstock", 0))).loc[("Delhi", "A")]
+    assert sweets["action"] == "Expected write-off ≈60 units (expires before it can sell) · order ~40 per delivery from now on"
+    assert actions.write_off_text(0, 40) .startswith("Expected write-off ≈0 units")
+
+
+def test_non_perishables_skip_whole_orders_when_40pct_off_is_not_enough():
+    # snacks: sell window 7 + 2 + 180 = 189 days; 3,000 units at 10/day needs x1.59 (> x1.43)
+    row = suggest(rows(("Delhi", "A", "snacks", 3000, 10, "overstock", 0))).loc[("Delhi", "A")]
+    assert (row["action_type"], row["reduce_units"], row["skip_orders"]) == ("reduce_order", 1110, 15)
+    assert row["action"] == "Skip the next 15 orders (≈1,110 units excess; a normal order is ~70)"  # 7-day cycle
+    assert row["action_detail"] == "Discount alone won't clear it: needs ~1.6× normal sales within 189 days; 40% off gives ~1.4×"
+    assert actions.reduce_text(95, 70) == ("Skip the next order (≈95 units excess; a normal order is ~70)", 1)
+    assert actions.reduce_text(20, 70) == ("Reduce next order by 20 units", 0)  # less than one normal order
+
+
+def test_recent_average_order_is_the_stock_on_delivery_mornings(tmp_path, monkeypatch):
+    import config
+    from build_bigbasket_regional_risk import recent_avg_order
+
+    # regional simulation: dairy delivered every 3 days (days_until_delivery == 3 on delivery mornings)
+    opening = np.array([[90.0, 60, 30, 120, 80, 40], [500, 400, 300, 200, 100, 50]])
+    until = np.array([[3, 2, 1, 3, 2, 1], [7, 6, 5, 4, 3, 2]])
+    avg = recent_avg_order(opening, until, pd.Series(["dairy", "snacks"]))
+    assert avg[0] == 105.0 and np.isnan(avg[1])  # (90 + 120) / 2; non-perishables: none
+
+    # model scope: POS history + this morning's stock, last 28 days only
+    counted = pd.Timestamp("2026-10-30")
+    pos = pd.DataFrame({"date": pd.to_datetime(["2026-09-01", "2026-10-26", "2026-10-27", "2026-10-29"]),
+                        "city": "Delhi", "sku_id": "A", "category": "dairy",
+                        "opening_stock": [999, 60, 40, 90], "days_until_delivery": [3, 3, 2, 3]})
+    pos.to_csv(tmp_path / "pos_synthetic.csv", index=False)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    today = pd.DataFrame({"date": [counted], "city": "Delhi", "sku_id": "A", "category": "dairy",
+                          "opening_stock": [300], "days_until_delivery": [1]})
+    orders = actions.model_recent_orders(today, counted)
+    assert orders.to_dict("records") == [{"city": "Delhi", "sku_id": "A", "recent_avg_order": 75.0}]  # (60 + 90) / 2
 
 
 def test_vendor_email_shows_the_action_in_the_overstock_section(fake_project, monkeypatch):

@@ -9,14 +9,18 @@ warm-up period at each product's RECENT demand level (recent_daily) with
 the generator's day-to-day noise -- i.e. stock ordered from history, which
 is then checked against the forecast for the coming week. Risk uses the same rule as the model risk report
 (inventory.classify_risk).
+
+recent_avg_order (perishables only, for actions.py): the average delivery over
+the last WARMUP_DAYS days, today included. Perishable stock is written off at each
+delivery, so the stock on a delivery morning is exactly that delivery.
 """
 
 import numpy as np
 import pandas as pd
 
-from config import DATA_DIR, OUTPUTS_DIR, RANDOM_SEED
+from config import DATA_DIR, DELIVERY_CYCLE_DAYS, OUTPUTS_DIR, RANDOM_SEED, SHELF_LIFE_DAYS
 from forecast_regional import OUT_PATH as FORECAST_PATH
-from inventory import classify_risk, simulate_inventory
+from inventory import classify_risk, review_days_for, simulate_inventory
 from sample_products import load_catalog
 
 WARMUP_DAYS = 28   # enough for several delivery cycles before "today"
@@ -28,16 +32,27 @@ REPORT_COLS = [
     "forecast_units", "forecast_daily", "forecast_horizon", "forecast_source", "analog_ids", "analog_weights",
     "analog_price_adj",
     "opening_stock", "stock_source", "days_until_delivery", "days_of_cover", "shelf_life_days",
-    "reorder_qty", "risk_status", "ean_code", "product_url", "image_url", "source_file",
+    "reorder_qty", "risk_status", "ean_code", "product_url", "image_url", "source_file", "recent_avg_order",
 ]
 
 
 def simulate_opening_stock(forecast, rng):
-    """Opening stock and days until the next delivery on the first forecast day, per row."""
+    """Opening stock and days until the next delivery on the first forecast day, and recent_avg_order, per row."""
     daily = forecast["recent_daily"].to_numpy()
     demand = np.clip(daily[:, None] * rng.normal(1.0, DEMAND_NOISE, (len(forecast), WARMUP_DAYS + 1)), 0, None)
     opening, _, days_until_delivery = simulate_inventory(demand, daily, forecast["model_category"], rng)
-    return opening[:, -1].round().astype(int), days_until_delivery[:, -1]
+    return opening[:, -1].round().astype(int), days_until_delivery[:, -1], recent_avg_order(
+        opening[:, 1:], days_until_delivery[:, 1:], forecast["model_category"])  # the last 28 days, today included
+
+
+def recent_avg_order(opening, days_until_delivery, categories):
+    """Mean stock on delivery mornings (days_until_delivery == the cycle): the order size for perishables, else NaN."""
+    cycle = review_days_for(categories)[:, None]
+    delivery = days_until_delivery == cycle
+    with np.errstate(invalid="ignore"):
+        mean = (opening * delivery).sum(axis=1) / delivery.sum(axis=1)
+    perishable = np.array([SHELF_LIFE_DAYS[c] <= DELIVERY_CYCLE_DAYS for c in categories])
+    return np.where(perishable, np.round(mean, 1), np.nan)
 
 
 def build():
@@ -46,7 +61,7 @@ def build():
     report = forecast.merge(catalog, on="sku_id", how="left")
 
     rng = np.random.default_rng(RANDOM_SEED)
-    report["opening_stock"], report["days_until_delivery"] = simulate_opening_stock(report, rng)
+    report["opening_stock"], report["days_until_delivery"], report["recent_avg_order"] = simulate_opening_stock(report, rng)
     report["stock_source"] = "simulated"
     report["avg_daily_pred"] = report["forecast_daily"]
     report = classify_risk(report, category_col="model_category")

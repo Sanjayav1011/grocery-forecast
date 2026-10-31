@@ -76,7 +76,7 @@ BigBasket catalog (data/archive_products.csv)
 | `src/train_model.py` | Time-series CV, Optuna tuning, final-test evaluation, model risk report |
 | `src/forecast_regional.py` | Catalog-wide forecasts per city (and each tracked product's forecast per day, `data/bigbasket_tracked_daily_forecast.csv`); free samples, store packaging and sub-₹1 products listed in `data/bigbasket_not_forecast.csv` |
 | `src/festival_uplift.py` | Festival-week demand uplift per city × category × festival from past years (`data/festival_uplift.csv`) and the admin "Festival planning" list |
-| `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city |
+| `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city (plus `recent_avg_order` for perishables, used by the overstock actions) |
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
 | `src/festival_readiness.py` | Festival readiness per product × city: festival-week demand vs stock and regular deliveries, shortfall, order-by date, status |
 | `src/serving_risk_report.py` | Model risk report for the serving date: tracked products, stock on the first forecast day vs the next 7 days of forecast |
@@ -410,23 +410,38 @@ rule, the forecasts or the models.
   demand and the analog forecasts use. The action reads, for example, "20%
   off for 4 days", where the days are how long the discounted rate takes to
   sell the stock.
-- **c) Otherwise reduce orders.** The detail says why a discount can't
-  clear the stock, for example "Discount alone won't clear it: needs ~7.8×
-  normal sales before expiry; 40% off gives ~1.4×". The action is counted
-  in whole delivery cycles of a normal order (forecast per day × cycle), for
-  example "Skip the next 6 orders (≈1,237 units excess; a normal order is
-  ~183)". It reads "Reduce next order by N units" only when the excess is
-  less than one normal order.
+- **When no discount is enough**, the detail says why, for example "Discount
+  alone won't clear it: needs ~7.8× normal sales before expiry; 40% off gives
+  ~1.4×". The action then depends on the category.
+- **c) Perishables (dairy, sweets): expected write-off.** The excess expires
+  before it can sell. The delivery cycle equals the shelf life, so skipping a
+  delivery would only empty the shelf. The action reads, for example,
+  "Expected write-off ≈1,237 units (expires before it can sell) · order ~183
+  per delivery instead of ~505 from now on". In that text:
+  - The first figure (~183) is one delivery cycle of forecast demand, the
+    right order size.
+  - The second figure (~505) is the average delivery over the last 28 days,
+    today included, from simulated stock. A perishable batch is written off
+    when the next one arrives, so the stock on a delivery morning equals that
+    delivery. Model report: the POS history plus this morning's stock.
+    Regional: the `recent_avg_order` column that
+    `build_bigbasket_regional_risk.py` saves from its warm-up simulation.
+  - The detail starts with the hint "Mark down or donate before expiry".
+- **d) Non-perishables: skip whole orders.** The excess is counted in whole
+  delivery cycles of a normal order (forecast per day × cycle), for example
+  "Skip the next 15 orders (≈1,110 units excess; a normal order is ~70)". It
+  reads "Reduce next order by N units" only when the excess is less than one
+  normal order.
 
 On 30 Oct (serving date), the counts are as follows. Every overstock is dairy
-or sweets.
+or sweets, so no row reads "skip orders" today.
 
-| City | Model report: transfer / discount / reduce | Regional: transfer / discount / reduce |
+| City | Model report: transfer / discount / write-off / reduce | Regional: transfer / discount / write-off / reduce |
 |---|---|---|
-| Bengaluru | 0 / 0 / 4 | 0 / 0 / 1 |
-| Chennai | 1 / 0 / 2 | 0 / 0 / 4 |
-| Delhi | 1 / 0 / 4 | 1 / 0 / 4 |
-| Mumbai | 0 / 0 / 2 | 6 / 0 / 8 |
+| Bengaluru | 0 / 0 / 4 / 0 | 0 / 0 / 1 / 0 |
+| Chennai | 1 / 0 / 2 / 0 | 0 / 0 / 4 / 0 |
+| Delhi | 1 / 0 / 4 / 0 | 1 / 0 / 4 / 0 |
+| Mumbai | 0 / 0 / 2 / 0 | 6 / 0 / 8 / 0 |
 
 No discount is suggested at the serving date. These products need 5–9×
 normal sales before expiry, and 40% off lifts demand only ~1.4×. Every
@@ -846,12 +861,12 @@ smaller budget stays fair.
   - An "Order now" transfer only has to be fresh on the first day of the
     festival week. Sweets that arrive on 2 Nov cover early Diwali-week
     demand, not the festival day itself.
-  - "Skip the next N orders" counts the excess in normal orders. For dairy
-    and sweets the delivery cycle equals the shelf life, so the excess
-    expires about when the next delivery arrives. Skipping that delivery
-    would leave the shelf empty, so for these categories read the action as
-    the size of the over-order to avoid, and expect the excess to be
-    written off.
+  - The write-off's "recent average order" is about 3× the right order
+    size. Part of that gap is built into the simulated policy: it orders
+    one cycle of demand plus 2 safety days, which is 1.5–1.7× one cycle.
+    The rest comes from the over-order that caused the overstock and from
+    demand rising ahead of Diwali. The "right order size" has no safety
+    stock.
 - **Promotions** are assumed off in forecasts, so weeks with planned
   promotions will be under-forecast.
 
