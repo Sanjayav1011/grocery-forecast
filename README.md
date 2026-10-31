@@ -382,39 +382,58 @@ rule, the forecasts or the models.
 - **Excess** = stock − forecast demand over the sell window. The sell window
   is the shelf life for perishables (dairy 3 days, sweets 4 days). For other
   categories it is the overstock threshold (7 + 2 + shelf life).
+- **Shelf life left** is how many days, counting today, the stock on hand
+  stays sellable. It arrived with the last delivery, so this is days until
+  the next delivery − delivery cycle + shelf life. For dairy that equals the
+  days until the next delivery; for sweets it is one less.
 - **a) Transfer first.** This applies when the same SKU is short in another
   city of the same scope, either at stockout risk (short by its reorder qty)
   or "Order now" in the next festival's readiness (short by its shortfall).
-  When a city is short both ways, the larger figure counts. The action reads
-  "Move N units to <city>", with N = min(excess here, shortfall there). Within
-  each SKU, the largest excess goes first, to the city with the largest
-  shortfall still open. Filled shortfalls shrink, and no transfer is larger
-  than the excess.
+  A shortfall only counts if the units are still sellable when that city
+  needs them, assuming 1 day in transit (`TRANSIT_DAYS`):
+  - **Stockout:** allowed only if shelf life left > 1 + that city's days
+    until its next delivery.
+  - **"Order now":** allowed only if the stock is still fresh on the first
+    day of the festival week (2 Nov for Diwali on 8 Nov). That means shelf
+    life left > the days from today to the week's start.
+
+  When a city is short both ways, the larger fresh figure counts. The action
+  reads "Move N units to <city>", with N = min(excess here, shortfall there).
+  Within each SKU, the largest excess goes first, to the city with the
+  largest fresh shortfall still open. Filled shortfalls shrink, and no
+  transfer is larger than the excess. When freshness rules a city out, the
+  detail says so, for example "Transfer ruled out: stock here is sellable
+  until 1 Nov; Chennai (Diwali "Order now") needs it sellable on 2 Nov".
 - **b) Otherwise discount.** The suggestion is the smallest discount (5%
   steps, up to 40%) at which the stock sells within the sell window. Demand
   is scaled by (1 − discount)^−0.7, the `PRICE_ELASTICITY` the synthetic
   demand and the analog forecasts use. The action reads, for example, "20%
   off for 4 days", where the days are how long the discounted rate takes to
   sell the stock.
-- **c) Otherwise reduce the order.** When 40% off is not enough, the detail
-  starts "Discount alone won't clear it" and the action is "Reduce next order
-  by N units", with N = the excess.
+- **c) Otherwise reduce orders.** The detail says why a discount can't
+  clear the stock, for example "Discount alone won't clear it: needs ~7.8×
+  normal sales before expiry; 40% off gives ~1.4×". The action is counted
+  in whole delivery cycles of a normal order (forecast per day × cycle), for
+  example "Skip the next 6 orders (≈1,237 units excess; a normal order is
+  ~183)". It reads "Reduce next order by N units" only when the excess is
+  less than one normal order.
 
 On 30 Oct (serving date), the counts are as follows. Every overstock is dairy
 or sweets.
 
 | City | Model report: transfer / discount / reduce | Regional: transfer / discount / reduce |
 |---|---|---|
-| Bengaluru | 3 / 0 / 1 | 0 / 0 / 1 |
-| Chennai | 2 / 0 / 1 | 3 / 0 / 1 |
-| Delhi | 4 / 0 / 1 | 4 / 0 / 1 |
-| Mumbai | 1 / 0 / 1 | 11 / 0 / 3 |
+| Bengaluru | 0 / 0 / 4 | 0 / 0 / 1 |
+| Chennai | 1 / 0 / 2 | 0 / 0 / 4 |
+| Delhi | 1 / 0 / 4 | 1 / 0 / 4 |
+| Mumbai | 0 / 0 / 2 | 6 / 0 / 8 |
 
-No discount is suggested at the serving date. These products hold 15–31 days
-of cover against a 3–4 day shelf life, so they would need 5–10× normal sales.
-At an elasticity of 0.7, 40% off lifts demand only 1.43×. Every transfer
-fills a Diwali "Order now" shortfall; there is no stockout of the same SKU in
-another city.
+No discount is suggested at the serving date. These products need 5–9×
+normal sales before expiry, and 40% off lifts demand only ~1.4×. Every
+remaining transfer fills a Diwali "Order now" shortfall with sweets that
+arrived that morning (4 days left: sellable until 2 Nov, the first day of
+Diwali week). There is no stockout of the same SKU in another city. The
+freshness check cut transfers from 28 (10 model, 18 regional) to 9.
 
 ### Business impact (admin)
 
@@ -822,12 +841,17 @@ smaller budget stays fair.
   training period.
 - **Festival dates** for 2021–2027 were checked against public holiday lists;
   lunar festivals can shift by a day by region. Re-check each year.
-- **Overstock transfers ignore shelf life at the destination.** A transfer
-  fills a festival "Order now" shortfall in the festival week (2–8 Nov for
-  Diwali). Dairy and sweets counted on 30 Oct keep only 3–4 days, so units
-  moved today would expire before that week. Read these transfers as "this
-  city needs the product for Diwali; this city has too much now". Transport
-  cost and time are also not modelled.
+- **Overstock actions are rough.**
+  - Transit is a fixed 1 day, and transport cost is not modelled.
+  - An "Order now" transfer only has to be fresh on the first day of the
+    festival week. Sweets that arrive on 2 Nov cover early Diwali-week
+    demand, not the festival day itself.
+  - "Skip the next N orders" counts the excess in normal orders. For dairy
+    and sweets the delivery cycle equals the shelf life, so the excess
+    expires about when the next delivery arrives. Skipping that delivery
+    would leave the shelf empty, so for these categories read the action as
+    the size of the over-order to avoid, and expect the excess to be
+    written off.
 - **Promotions** are assumed off in forecasts, so weeks with planned
   promotions will be under-forecast.
 

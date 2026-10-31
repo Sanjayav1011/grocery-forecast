@@ -10,6 +10,10 @@ simulated. The risk rule itself (inventory.classify_risk) is unchanged.
                 the overstock threshold (LEAD_TIME_DAYS + 2 + shelf life, as in
                 classify_risk) for the rest
   excess        max(0, stock - forecast_daily x sell window)
+  shelf left    days the stock on hand stays sellable, counting today: it came
+                with the last delivery, days_until_delivery - R days ago (R =
+                the delivery cycle, as in festival_readiness), so
+                days_until_delivery - R + shelf life
 
 Then, in order:
 
@@ -21,14 +25,24 @@ Then, in order:
                 Surpluses are paired largest excess first, each with the city
                 that has the largest shortfall still open; a city's shortfall
                 shrinks as transfers fill it. Never more than the excess.
+                Freshness: a shortfall only counts if the units are still
+                within shelf life when that city needs them, after
+                TRANSIT_DAYS in transit -- stockout: shelf left > TRANSIT_DAYS
+                + that city's days until its next delivery; "Order now": still
+                fresh on the first day of the festival week (shelf left > days
+                from today to the week's start). Otherwise b), then c).
   b) discount   the smallest discount d (5% steps, up to 40%) at which the
                 stock sells within the sell window, with demand x
                 (1 - d) ** -PRICE_ELASTICITY (the elasticity the synthetic
                 demand and the analog price adjustment use).
                 "20% off for 4 days": the days the discounted rate needs to
                 sell the stock.
-  c) reduce     otherwise (40% is not enough: "Discount alone won't clear it"):
-                "Reduce next order by N units", N = the excess.
+  c) reduce     otherwise (40% is not enough: "Discount alone won't clear it",
+                with the sales multiple the stock would need vs the ~1.4x that
+                40% off gives). In whole delivery cycles of a normal order
+                (forecast_daily x R): "Skip the next K orders (≈N units excess;
+                a normal order is ~M)", K = floor(N / M); "Reduce next order by
+                N units" when N is less than one normal order.
 """
 
 import json
@@ -38,14 +52,18 @@ import numpy as np
 import pandas as pd
 
 from config import DELIVERY_CYCLE_DAYS, LEAD_TIME_DAYS, PRICE_ELASTICITY, SAFETY_STOCK_DAYS, SHELF_LIFE_DAYS
+from inventory import review_days_for
 
 LABEL = "Estimate · simulated stock"
 DISCOUNT_STEP = 0.05
 MAX_DISCOUNT = 0.40
 NO_DISCOUNT = "Discount alone won't clear it"
+TRANSIT_DAYS = 1
+FESTIVAL_WEEK_DAYS = 7  # festival_readiness.FESTIVAL_WEEK_DAYS
 TYPES = ["transfer", "discount", "reduce_order"]
 COLUMNS = ["city", "sku_id", "excess_units", "sell_window_days", "action_type", "action", "action_detail",
-           "transfer_to", "transfer_units", "discount_pct", "discount_days", "reduce_units"]
+           "shelf_left_days", "transfer_to", "transfer_units", "discount_pct", "discount_days", "reduce_units",
+           "normal_order", "skip_orders"]
 _CACHE = {}
 
 
@@ -80,57 +98,110 @@ def discount_plan(stock, daily, window, elasticity=PRICE_ELASTICITY):
 
 def pair_transfers(surplus, short):
     """
-    surplus: rows with sku_id, city, excess; short: rows with sku_id, city,
-    shortfall and reason. Returns {surplus index: (city, units, reason)}: per
-    SKU, largest excess first, each to the other city with the largest
+    surplus: rows with sku_id, city, excess and shelf_left; short: rows with
+    sku_id, city, shortfall, reason and need_by (the day offset the units must
+    still be sellable on). Returns ({surplus index: (city, units, reason)},
+    {surplus index: [(city, reason, need_by)] ruled out by freshness}): per
+    SKU, largest excess first, each to the other city with the largest fresh
     shortfall still open; units = min(excess, open shortfall).
     """
-    plan = {}
+    plan, blocked = {}, {}
     for sku, rows in surplus[surplus["excess"] > 0].groupby("sku_id", sort=False):
         needs = short[(short["sku_id"] == sku) & (short["shortfall"] > 0)]
-        open_need = {city: [float(need), reason] for city, need, reason in needs[["city", "shortfall", "reason"]].itertuples(index=False)}
+        filled = {}  # units already sent to each city
         for index, row in rows.sort_values(["excess", "city"], ascending=[False, True]).iterrows():
-            options = sorted((-need, city) for city, (need, _) in open_need.items() if city != row["city"] and need > 0)
+            other = needs[needs["city"] != row["city"]]
+            fresh = other[other["need_by"] < row["shelf_left"]]
+            stale = other[other["need_by"] >= row["shelf_left"]]
+            if not stale.empty:
+                blocked[index] = list(stale[["city", "reason", "need_by"]].itertuples(index=False, name=None))
+            options = []
+            for city, group in fresh.groupby("city"):
+                best = group.loc[group["shortfall"].idxmax()]  # the larger need if a city is short both ways
+                open_units = float(best["shortfall"]) - filled.get(city, 0)
+                if open_units > 0:
+                    options.append((-open_units, city, best["reason"]))
             if not options:
                 continue
-            need, city = -options[0][0], options[0][1]  # largest open shortfall; ties by city name
-            units = math.floor(min(row["excess"], need))
+            need, city, reason = min(options)  # largest open shortfall; ties by city name
+            units = math.floor(min(row["excess"], -need))
             if units <= 0:
                 continue
-            plan[index] = (city, units, open_need[city][1])
-            open_need[city][0] -= units
-    return plan
+            plan[index] = (city, units, reason)
+            filled[city] = filled.get(city, 0) + units
+    return plan, blocked
 
 
-def shortfalls(rows, readiness=None, festival=""):
-    """Per city x SKU: stockout reorder_qty and "Order now" readiness shortfall, the larger one with its reason."""
-    frames = [rows.loc[rows["risk_status"] == "stockout", ["city", "sku_id", "reorder_qty"]]
-              .rename(columns={"reorder_qty": "shortfall"}).assign(reason="stockout risk")]
-    if readiness is not None and not readiness.empty:
+def shortfalls(rows, readiness=None, festival="", week_start=None):
+    """
+    Short city x SKU rows (both, if a city is short both ways): stockout
+    (reorder_qty, needed until its next delivery after transit) and "Order
+    now" readiness (shortfall, needed from the festival week's first day,
+    `week_start` days after today).
+    """
+    stockout = rows[rows["risk_status"] == "stockout"]
+    frames = [pd.DataFrame({"city": stockout["city"], "sku_id": stockout["sku_id"], "shortfall": stockout["reorder_qty"],
+                            "reason": "stockout risk", "need_by": TRANSIT_DAYS + stockout["days_until_delivery"]})]
+    if readiness is not None and not readiness.empty and week_start is not None:
         now = readiness[readiness["status"] == "Order now"]
-        frames.append(now[["city", "sku_id", "shortfall"]].assign(reason=f"{festival} “Order now”".strip()))
-    short = pd.concat(frames, ignore_index=True)
-    short = short.sort_values("shortfall", ascending=False, kind="stable").drop_duplicates(["city", "sku_id"])
-    return short.reset_index(drop=True)
+        frames.append(pd.DataFrame({"city": now["city"], "sku_id": now["sku_id"], "shortfall": now["shortfall"],
+                                    "reason": f"{festival} “Order now”".strip(), "need_by": week_start}))
+    return pd.concat(frames, ignore_index=True)
 
 
-def overstock_actions(rows, short, category_col="category"):
-    """One action per overstock row of `rows` (needs city, sku_id, opening_stock, forecast_daily, risk_status)."""
+def multiple(value):
+    return f"{value:.1f}" if value < 10 else f"{value:,.0f}"
+
+
+def reduce_text(units, normal_order):
+    """The reduce-order action in whole delivery cycles: (text, orders skipped)."""
+    if normal_order <= 0 or units < normal_order:
+        return f"Reduce next order by {units:,} units", 0
+    skip = math.floor(units / normal_order)
+    orders = "the next order" if skip == 1 else f"the next {skip} orders"
+    return f"Skip {orders} (≈{units:,} units excess; a normal order is ~{normal_order:,.0f})", skip
+
+
+def day_text(offset, counted=None):
+    """A day offset from the stock-counting morning, as a date when that day is known ("2 Nov") or "day 3"."""
+    if counted is None:
+        return f"day {offset}"
+    day = pd.Timestamp(counted) + pd.Timedelta(days=int(offset))
+    return f"{day.day} {day:%b}"
+
+
+def blocked_text(shelf_left, blocked, counted=None):
+    """e.g. 'Transfer ruled out: stock here is sellable until 1 Nov; Delhi (Diwali “Order now”) needs it sellable on 2 Nov'."""
+    needs = "; ".join(f"{city} ({reason}) needs it sellable on {day_text(need_by, counted)}" for city, reason, need_by in blocked)
+    return f"Transfer ruled out: stock here is sellable until {day_text(int(shelf_left) - 1, counted)}; {needs}"
+
+
+def overstock_actions(rows, short, category_col="category", counted=None):
+    """
+    One action per overstock row of `rows` (needs city, sku_id, opening_stock,
+    forecast_daily, days_until_delivery, risk_status); `counted` (the
+    stock-counting day) turns day offsets into dates in the text.
+    """
     over = rows[rows["risk_status"] == "overstock"].copy()
     if over.empty:
         return pd.DataFrame(columns=COLUMNS)
     over["sell_window_days"] = over[category_col].map(sell_window)
     over["excess"] = [excess_units(stock, daily, window) for stock, daily, window
                       in over[["opening_stock", "forecast_daily", "sell_window_days"]].itertuples(index=False)]
-    transfers = pair_transfers(over, short)
+    cycle = review_days_for(over[category_col])
+    over["normal_order"] = over["forecast_daily"] * cycle
+    over["shelf_left"] = over["days_until_delivery"] - cycle + over[category_col].map(SHELF_LIFE_DAYS)
+    transfers, blocked = pair_transfers(over, short)
     out = []
     for index, row in over.iterrows():
         excess = row["excess"]
         record = {"city": row["city"], "sku_id": row["sku_id"], "excess_units": math.ceil(excess - 1e-9),
-                  "sell_window_days": int(row["sell_window_days"]), "transfer_to": None, "transfer_units": None,
-                  "discount_pct": None, "discount_days": None, "reduce_units": None}
+                  "sell_window_days": int(row["sell_window_days"]), "shelf_left_days": int(row["shelf_left"]),
+                  "transfer_to": None, "transfer_units": None, "discount_pct": None, "discount_days": None,
+                  "reduce_units": None, "normal_order": round(float(row["normal_order"]), 1), "skip_orders": None}
         window = int(row["sell_window_days"])
         sells = f"{row['forecast_daily']:.1f}/day forecast sells {row['forecast_daily'] * window:,.0f} in {window} days"
+        ruled_out = f" · {blocked_text(row['shelf_left'], blocked[index], counted)}" if index in blocked else ""
         if index in transfers:
             city, units, reason = transfers[index]
             record.update(action_type="transfer", action=f"Move {units:,} units to {city}", transfer_to=city,
@@ -142,41 +213,52 @@ def overstock_actions(rows, short, category_col="category"):
                 discount, days = plan
                 record.update(action_type="discount", action=f"{discount:.0%} off for {days} day{'s' * (days != 1)}",
                               discount_pct=round(discount * 100), discount_days=days,
-                              action_detail=f"{record['excess_units']:,} excess units ({sells}); demand ×{demand_lift(discount):.2f} at {discount:.0%} off")
+                              action_detail=f"{record['excess_units']:,} excess units ({sells}); demand ×{demand_lift(discount):.2f} at {discount:.0%} off{ruled_out}")
             else:
                 units = record["excess_units"]
-                record.update(action_type="reduce_order", action=f"Reduce next order by {units:,} units", reduce_units=units,
-                              action_detail=f"{NO_DISCOUNT}: {units:,} excess units ({sells}); 40% off lifts demand only ×{demand_lift(MAX_DISCOUNT):.2f}")
+                text, skip = reduce_text(units, row["normal_order"])
+                needed = row["opening_stock"] / max(row["forecast_daily"] * window, 1e-9)
+                when = "before expiry" if window <= DELIVERY_CYCLE_DAYS else f"within {window} days"
+                record.update(action_type="reduce_order", action=text, reduce_units=units, skip_orders=skip,
+                              action_detail=f"{NO_DISCOUNT}: needs ~{multiple(needed)}× normal sales {when}; "
+                                            f"{MAX_DISCOUNT:.0%} off gives ~{demand_lift(MAX_DISCOUNT):.1f}×{ruled_out}")
         out.append(record)
     return pd.DataFrame(out, columns=COLUMNS)
 
 
 def festival_readiness_rows(cities):
-    """ "Order now" readiness for the default festival in every city, and its name; (None, "") when unavailable."""
+    """
+    Readiness for the default festival in every city, its name and the days
+    from the stock-counting day to the festival week's first day; (None, "",
+    None) when unavailable.
+    """
     import festival_readiness
 
     try:
-        tables, festival = [], ""
+        tables, festival, week_start = [], "", None
         for city in cities:
             meta, table = festival_readiness.city_readiness(city)
             tables.append(table)
             festival = meta["festival"]
-        return pd.concat(tables, ignore_index=True), festival
+            counted = meta["data_date"] + pd.Timedelta(days=1)  # stock is counted the morning after the data date
+            week_start = (meta["date"] - counted).days - (FESTIVAL_WEEK_DAYS - 1)
+        return pd.concat(tables, ignore_index=True), festival, week_start
     except (FileNotFoundError, LookupError, ValueError):
-        return None, ""
+        return None, "", None
 
 
 def scope_actions(scope):
     """Actions for a stockout_view scope ("model" or "regional"), built once and kept in memory."""
     import stockout_view
 
-    rows, _ = stockout_view.raw_rows(scope)
+    rows, counted = stockout_view.raw_rows(scope)
     if scope not in _CACHE or _CACHE[scope][0] is not rows:  # rebuilt when stockout_view's table is
         category_col = "model_category" if "model_category" in rows else "category"
-        readiness, festival = (None, "")
+        readiness, festival, week_start = (None, "", None)
         if (rows["risk_status"] == "overstock").any():
-            readiness, festival = festival_readiness_rows(sorted(rows["city"].unique()))
-        _CACHE[scope] = rows, overstock_actions(rows, shortfalls(rows, readiness, festival), category_col)
+            readiness, festival, week_start = festival_readiness_rows(sorted(rows["city"].unique()))
+        _CACHE[scope] = rows, overstock_actions(rows, shortfalls(rows, readiness, festival, week_start), category_col,
+                                                     counted)
     return _CACHE[scope][1]
 
 
