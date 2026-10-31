@@ -9,6 +9,38 @@ input.
 The product catalog is real (57,013 BigBasket products). **Sales history and
 stock levels are synthetic** — see [Limitations](#limitations).
 
+## Features
+
+- **Forecasts:** two LightGBM models (perishable / non-perishable, Tweedie)
+  forecast the next 7 days for 344 tracked products in 4 cities. Analog
+  forecasts extend them to the rest of the 57,013-product catalog.
+- **Risk rule:** one delivery-aware rule (`inventory.classify_risk`) flags
+  stockout and overstock risk and suggests a reorder qty. It is used for the
+  evaluation report, the serving report and the catalog.
+- **Admin dashboard** (`/admin`) for each city:
+  - Stockout views with filters (city, category, brand, price range,
+    top sellers, sales trend, cover, forecast source, name search),
+    sorting, a by-brand summary and CSV download.
+  - Overstock tables with the suggested action ("Reduce orders").
+  - Product panel: 60 days of history, the 7-day forecast, festivals, stock
+    and analogs.
+  - "Why this forecast?" from LightGBM SHAP values, and a "What drives demand"
+    card.
+  - Festival planning and Diwali readiness: a top-up above regular orders,
+    with order-by dates and value at risk.
+  - Estimated ₹ business impact per city.
+- **Customer storefront** (`/`): the catalog with search, categories and a
+  demo basket.
+- **Email alerts:** per-city vendor emails with stockout and overstock
+  tables and a festival "order now" section. Dry run by default; sent over
+  SMTP STARTTLS with an App Password.
+- **Model comparison:** seasonal naive and 28-day moving average baselines
+  against XGBoost, CatBoost and LightGBM on the same folds.
+
+All sales history and stock are **simulated** (see
+[Limitations](#limitations)). The dashboard labels simulated and estimated
+numbers as such.
+
 ## Architecture
 
 One pipeline, run by `run_pipeline.py`:
@@ -75,15 +107,21 @@ and `pip install openpyxl`; the first pipeline step converts it.
 ## Run
 
 ```bash
-python run_pipeline.py   # ~1 minute with saved models; prints per-step timings
-python dashboard.py      # http://127.0.0.1:8000
-python -m pytest         # after the pipeline has run
+python run_pipeline.py                 # the whole pipeline, one command; prints per-step timings
+python dashboard.py                    # http://127.0.0.1:8000 (storefront) and /admin
+python src/alerts.py --city all        # vendor alerts, dry run to outputs/alerts/
+python src/alerts.py --city Bengaluru --send   # really email (needs .env, see Email alerts)
+python -m pytest                       # after the pipeline has run
 ```
 
-`run_pipeline.py` uses the saved models (`models/lgbm_*.txt`) and skips
-training. It only trains when there are no saved models, or with
-`--retrain`, and then with the tuned parameters in
-`models/params_<segment>.json` (`train_model.py --trials 0`). To re-tune,
+Saved models (`models/lgbm_*.txt`) are not in git. On a fresh clone,
+`run_pipeline.py` trains them from the committed tuned parameters
+(`models/params_<segment>.json`, `train_model.py --trials 0`). The trained
+models, and every output, are byte-identical to the reference run. Measured
+on a 10-core Mac: about 6.5 minutes on a fresh clone (about 4.5 of them
+training) and under 2 minutes after that. A fresh clone needs only
+`data/archive_products.csv` (see Setup). After the first run the pipeline
+reuses the models and skips training; pass `--retrain` to train again. To re-tune,
 run `python src/train_model.py --trials 120` (about 35 minutes).
 Retraining rewrites every evaluation result.
 
@@ -493,9 +531,9 @@ more … on the admin dashboard". At the serving date, that festival is
 Diwali.
 
 ```bash
-python -m src.alerts --city all                      # dry run: outputs/alerts/<date>_<city>.html/.csv
-python -m src.alerts --city Bengaluru --date 2026-10-30
-python -m src.alerts --city Bengaluru --send         # real email
+python src/alerts.py --city all                      # dry run: outputs/alerts/<date>_<city>.html/.csv
+python src/alerts.py --city Bengaluru --date 2026-10-30
+python src/alerts.py --city Bengaluru --send         # real email
 python run_pipeline.py --alerts                      # pipeline, then a dry run for all cities
 ```
 
@@ -610,6 +648,30 @@ model is fitted and scored on identical folds and the identical test window.
 python src/compare_models.py --trials 40                  # full study
 python src/compare_models.py --trials 2 --max-series 20   # ~3-minute smoke test
 ```
+
+**Result** (`--trials 40`, final test 1 Apr–25 Aug 2026, simulated sales):
+
+| Segment | Seasonal naive | Moving avg 28d | XGBoost tuned | CatBoost tuned | LightGBM tuned |
+|---|---|---|---|---|---|
+| Perishable WAPE % | 18.30 | 18.91 | 10.07 | 10.11 | 10.10 |
+| Non-perishable WAPE % | 17.37 | 16.10 | 9.96 | 10.12 | 10.19 |
+| Stockout recall, perishable / non-perishable | 0.25 / 0.36 | 0.14 / 0.21 | 0.99 / 0.91 | 0.99 / 0.91 | 0.99 / 0.90 |
+| Tuning time (s), perishable / non-perishable | – | – | 2,139 / 10,635 | 11,760 / 64,868 | 1,607 / 3,648 |
+| Model size (MB), non-perishable | – | – | 74.8 | 8.1 | 4.0 |
+
+- **Accuracy:** the three tuned gradient-boosting models are within about
+  0.2 points of WAPE of each other, and their WAPE is 38–45% lower than the
+  best baseline's.
+- **Stockout recall:** the boosted models catch 2.5–4× more stockouts than
+  the best baseline.
+- **Why LightGBM stays in production:** XGBoost is marginally the most
+  accurate. LightGBM matches it within 0.03 points on perishables and
+  0.23 on non-perishables, tunes 1.3–3× faster than XGBoost (7–18× faster
+  than CatBoost), and its non-perishable model is about 19× smaller than
+  XGBoost's.
+
+The comparison's tuned LightGBM uses early stopping, so its numbers differ
+slightly from the production models in [Results](#results).
 
 Outputs: `outputs/model_comparison.csv` / `.json` and charts in
 `outputs/comparison/` (`wape_by_model.png`, `cv_wape_by_fold.png`,

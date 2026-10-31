@@ -36,7 +36,9 @@ SERVING_START = (pd.Timestamp(SERVING_DATE) + pd.Timedelta(days=1)).date().isofo
 
 def require(path):
     if not path.exists():
-        pytest.skip(f"{path.name} not generated; run run_pipeline.py first")
+        step = "src/compare_models.py --trials 40 (the model comparison study, not part of the pipeline)" \
+            if path.name.startswith("model_comparison") else "run_pipeline.py"
+        pytest.skip(f"{path.name} not generated; run {step} first")
     return path
 
 

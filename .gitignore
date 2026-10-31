@@ -9,3 +9,8 @@ models/*.txt
 models/*.json
 project_error_report.md
 !models/params_*.json
+catboost_info/
+.vscode/
+.pytest_cache/
+.idea/
+*.log
