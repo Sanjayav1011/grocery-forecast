@@ -118,25 +118,27 @@ def test_no_transfer_when_the_other_city_is_not_short():
 
 
 def test_perishable_excess_is_an_expected_write_off_with_the_right_order_size():
-    risk = rows(("Delhi", "A", "dairy", 100, 10, "overstock", 0)).assign(recent_avg_order=50.0)
+    risk = rows(("Delhi", "A", "dairy", 100, 10, "overstock", 0)).assign(recent_avg_order=80.0)
     row = suggest(risk).loc[("Delhi", "A")]
-    # excess 100 - 10 x 3 = 70 expires; right order = 10/day x 3-day cycle = 30; recent deliveries averaged 50
-    assert (row["action_type"], row["reduce_units"], row["normal_order"], row["recent_avg_order"]) == ("write_off", 70, 30, 50)
-    assert row["action"] == "Expected write-off ≈70 units (expires before it can sell) · order ~30 per delivery instead of ~50 from now on"
+    # excess 100 - 10 x 3 = 70 expires; right order = 10/day x (3-day cycle + 2 safety days) = 50,
+    # as the reorder rule orders; recent deliveries averaged 80
+    assert (row["action_type"], row["reduce_units"], row["normal_order"], row["recent_avg_order"]) == ("write_off", 70, 50, 80)
+    assert row["action"] == "Expected write-off ≈70 units (expires before it can sell) · order ~50 per delivery instead of ~80 from now on"
     assert row["action_detail"] == ("Mark down or donate before expiry · Discount alone won't clear it: "
                                     "needs ~3.3× normal sales before expiry; 40% off gives ~1.4×")
     assert pd.isna(row["skip_orders"])  # never "skip orders" for perishables
     # without an order history (no recent_avg_order), only the right size
     sweets = suggest(rows(("Delhi", "A", "sweets", 100, 10, "overstock", 0))).loc[("Delhi", "A")]
-    assert sweets["action"] == "Expected write-off ≈60 units (expires before it can sell) · order ~40 per delivery from now on"
-    assert actions.write_off_text(0, 40) .startswith("Expected write-off ≈0 units")
+    assert sweets["action"] == "Expected write-off ≈60 units (expires before it can sell) · order ~60 per delivery from now on"  # 10 x (4 + 2)
+    assert actions.write_off_text(0, 60).startswith("Expected write-off ≈0 units")
 
 
 def test_non_perishables_skip_whole_orders_when_40pct_off_is_not_enough():
     # snacks: sell window 7 + 2 + 180 = 189 days; 3,000 units at 10/day needs x1.59 (> x1.43)
     row = suggest(rows(("Delhi", "A", "snacks", 3000, 10, "overstock", 0))).loc[("Delhi", "A")]
-    assert (row["action_type"], row["reduce_units"], row["skip_orders"]) == ("reduce_order", 1110, 15)
-    assert row["action"] == "Skip the next 15 orders (≈1,110 units excess; a normal order is ~70)"  # 7-day cycle
+    assert (row["action_type"], row["reduce_units"], row["skip_orders"]) == ("reduce_order", 1110, 12)
+    # a normal order is 10/day x (7-day cycle + 2 safety days) = 90; 1,110 / 90 = 12.3 whole orders
+    assert row["action"] == "Skip the next 12 orders (≈1,110 units excess; a normal order is ~90)"
     assert row["action_detail"] == "Discount alone won't clear it: needs ~1.6× normal sales within 189 days; 40% off gives ~1.4×"
     assert actions.reduce_text(95, 70) == ("Skip the next order (≈95 units excess; a normal order is ~70)", 1)
     assert actions.reduce_text(20, 70) == ("Reduce next order by 20 units", 0)  # less than one normal order

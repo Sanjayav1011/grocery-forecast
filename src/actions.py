@@ -37,19 +37,23 @@ Then, in order:
                 demand and the analog price adjustment use).
                 "20% off for 4 days": the days the discounted rate needs to
                 sell the stock.
+  normal order  forecast_daily x (R + SAFETY_STOCK_DAYS): one delivery cycle of
+                forecast demand plus 2 days, as the reorder rule
+                (inventory.classify_risk, simulate_inventory) orders
+
   otherwise 40% is not enough: "Discount alone won't clear it", with the
   sales multiple the stock would need vs the ~1.4x that 40% off gives, and
   c) write-off  perishables (sell window = shelf life): the excess expires
                 before it can sell, and the delivery cycle equals the shelf
                 life, so skipping a delivery would empty the shelf. "Expected
                 write-off ≈N units (expires before it can sell) · order ~X per
-                delivery instead of ~Y from now on", X = forecast_daily x R
-                (one cycle of forecast demand), Y = recent_avg_order, the
+                delivery instead of ~Y from now on", X = the normal order
+                (below), Y = recent_avg_order, the
                 average delivery over the last RECENT_ORDER_DAYS days (today
                 included; it includes any over-order). The detail starts with
                 the hint "Mark down or donate before expiry" when N > 0.
   d) reduce     non-perishables, in whole delivery cycles of a normal order
-                M = forecast_daily x R: "Skip the next K orders (≈N units
+                M: "Skip the next K orders (≈N units
                 excess; a normal order is ~M)", K = floor(N / M); "Reduce next
                 order by N units" when N is less than one normal order.
 """
@@ -212,7 +216,7 @@ def overstock_actions(rows, short, category_col="category", counted=None):
     over["excess"] = [excess_units(stock, daily, window) for stock, daily, window
                       in over[["opening_stock", "forecast_daily", "sell_window_days"]].itertuples(index=False)]
     cycle = review_days_for(over[category_col])
-    over["normal_order"] = over["forecast_daily"] * cycle
+    over["normal_order"] = over["forecast_daily"] * (cycle + SAFETY_STOCK_DAYS)  # the reorder rule's order size
     over["shelf_left"] = over["days_until_delivery"] - cycle + over[category_col].map(SHELF_LIFE_DAYS)
     transfers, blocked = pair_transfers(over, short)
     out = []

@@ -416,10 +416,11 @@ rule, the forecasts or the models.
 - **c) Perishables (dairy, sweets): expected write-off.** The excess expires
   before it can sell. The delivery cycle equals the shelf life, so skipping a
   delivery would only empty the shelf. The action reads, for example,
-  "Expected write-off ≈1,237 units (expires before it can sell) · order ~183
+  "Expected write-off ≈1,237 units (expires before it can sell) · order ~275
   per delivery instead of ~505 from now on". In that text:
-  - The first figure (~183) is one delivery cycle of forecast demand, the
-    right order size.
+  - The first figure (~275) is the right order size, the same as the reorder
+    rule: forecast demand over one delivery cycle plus 2 days of forecast
+    demand (`SAFETY_STOCK_DAYS`), here 45.8/day × (4 + 2).
   - The second figure (~505) is the average delivery over the last 28 days,
     today included, from simulated stock. A perishable batch is written off
     when the next one arrives, so the stock on a delivery morning equals that
@@ -428,8 +429,9 @@ rule, the forecasts or the models.
     `build_bigbasket_regional_risk.py` saves from its warm-up simulation.
   - The detail starts with the hint "Mark down or donate before expiry".
 - **d) Non-perishables: skip whole orders.** The excess is counted in whole
-  delivery cycles of a normal order (forecast per day × cycle), for example
-  "Skip the next 15 orders (≈1,110 units excess; a normal order is ~70)". It
+  delivery cycles of the same normal order (forecast per day × (cycle + 2
+  days)), for example "Skip the next 12 orders (≈1,110 units excess; a normal
+  order is ~90)". It
   reads "Reduce next order by N units" only when the excess is less than one
   normal order.
 
@@ -861,12 +863,12 @@ smaller budget stays fair.
   - An "Order now" transfer only has to be fresh on the first day of the
     festival week. Sweets that arrive on 2 Nov cover early Diwali-week
     demand, not the festival day itself.
-  - The write-off's "recent average order" is about 3× the right order
-    size. Part of that gap is built into the simulated policy: it orders
-    one cycle of demand plus 2 safety days, which is 1.5–1.7× one cycle.
-    The rest comes from the over-order that caused the overstock and from
-    demand rising ahead of Diwali. The "right order size" has no safety
-    stock.
+  - The write-off's "recent average order" is 1.4–3.1× the right order
+    size (median 2×) on 30 Oct. Both use the same cycle + 2 days rule, so
+    the gap is not safety stock. It comes from the over-order that caused
+    the overstock (3–5× a normal order, which lifts a 28-day average of 7–9
+    deliveries), and from orders that follow recent demand rather than the
+    forecast. The right order size uses the forecast for the next 7 days.
 - **Promotions** are assumed off in forecasts, so weeks with planned
   promotions will be under-forecast.
 
