@@ -1,7 +1,8 @@
 .venv/
 __pycache__/
 *.zip
-data/*.csv
+data/**/*.csv
+data/favorita/
 outputs/
 models/*.txt
 .env

@@ -2,7 +2,7 @@
 alerts.py
 -----------
 Emails each city's vendor the day's stockout / overstock rows from the
-serving model risk report (outputs/serving_stockout_risk_report.csv and
+serving model risk report (outputs/reports/serving_stockout_risk_report.csv and
 serving_overstock_risk_report.csv, written by serving_risk_report.py for the
 morning after config.SERVING_DATE). Nothing here changes the forecast or the risk
 rule; it only formats rows that inventory.classify_risk already labelled.
@@ -38,9 +38,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from actions import LABEL as ACTION_LABEL  # noqa: E402
-from config import OUTPUTS_DIR, PROJECT_DIR  # noqa: E402
+from config import OUTPUTS_DIR, PROJECT_DIR, REPORTS_DIR  # noqa: E402
 
-REPORT_DIR = OUTPUTS_DIR
+REPORT_DIR = REPORTS_DIR
 ALERTS_DIR = OUTPUTS_DIR / "alerts"
 # "Festival readiness" section: the "Order now" rows (top READINESS_CAP) of the next
 # festival within READINESS_WINDOW_DAYS of the serving date (festival_readiness.py)

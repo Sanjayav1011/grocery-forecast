@@ -264,7 +264,7 @@ def overstock_actions(rows, short, category_col="category", counted=None):
 def model_recent_orders(rows, counted):
     """
     recent_avg_order for the model scope's perishable rows, from the POS data
-    (data/pos_synthetic.csv) and this morning's stock: the mean stock on
+    (data/processed/pos_synthetic.csv) and this morning's stock: the mean stock on
     delivery mornings (days_until_delivery == the cycle) over the last
     RECENT_ORDER_DAYS days, today included. Perishable stock is written off at
     each delivery, so that stock is exactly the delivery.

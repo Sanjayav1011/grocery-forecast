@@ -23,7 +23,7 @@ un-censored), summed over a city's tracked products in each category. This
 is a planning estimate, not a model forecast: the model only forecasts
 LEAD_TIME_DAYS ahead.
 
-Output: data/festival_uplift.csv (one row per city x category x festival)
+Output: data/processed/festival_uplift.csv (one row per city x category x festival)
 Usage : python festival_uplift.py
 """
 
@@ -92,7 +92,7 @@ _UPLIFTS = {}
 
 
 def load_uplifts():
-    """data/festival_uplift.csv, kept in memory."""
+    """data/processed/festival_uplift.csv, kept in memory."""
     path = DATA_DIR / "festival_uplift.csv"
     if path not in _UPLIFTS:
         _UPLIFTS.clear()

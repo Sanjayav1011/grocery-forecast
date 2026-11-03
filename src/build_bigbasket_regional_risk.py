@@ -1,6 +1,6 @@
 """Build the four-region inventory-risk layer for the BigBasket catalog.
 
-Demand comes from the model forecasts in data/bigbasket_regional_forecast.csv
+Demand comes from the model forecasts in data/processed/bigbasket_regional_forecast.csv
 (forecast_regional.py: LightGBM direct for tracked products, K-nearest
 analogs for the rest). The archive has no stock feed, so opening stock is
 SIMULATED (stock_source = "simulated") by running the same replenishment
@@ -18,7 +18,7 @@ delivery, so the stock on a delivery morning is exactly that delivery.
 import numpy as np
 import pandas as pd
 
-from config import DATA_DIR, DELIVERY_CYCLE_DAYS, OUTPUTS_DIR, RANDOM_SEED, SHELF_LIFE_DAYS
+from config import DATA_DIR, DELIVERY_CYCLE_DAYS, REPORTS_DIR, RANDOM_SEED, SHELF_LIFE_DAYS
 from forecast_regional import OUT_PATH as FORECAST_PATH
 from inventory import classify_risk, review_days_for, simulate_inventory
 from sample_products import load_catalog
@@ -75,8 +75,8 @@ def build():
                                     "Image Link": "image_url", "Source File": "source_file"})[REPORT_COLS]
 
     report.to_csv(DATA_DIR / "bigbasket_regional_inventory.csv", index=False)
-    report[report["risk_status"] == "stockout"].to_csv(OUTPUTS_DIR / "bigbasket_stockout_risk_report.csv", index=False)
-    report[report["risk_status"] == "overstock"].to_csv(OUTPUTS_DIR / "bigbasket_overstock_risk_report.csv", index=False)
+    report[report["risk_status"] == "stockout"].to_csv(REPORTS_DIR / "bigbasket_stockout_risk_report.csv", index=False)
+    report[report["risk_status"] == "overstock"].to_csv(REPORTS_DIR / "bigbasket_overstock_risk_report.csv", index=False)
     print(f"Saved {len(report):,} region-product rows across {report['region'].nunique()} regions")
     split = report.groupby("region")["risk_status"].value_counts(normalize=True).unstack(fill_value=0) * 100
     print(split.reindex(columns=["stockout", "normal", "overstock"], fill_value=0).round(1).to_string())

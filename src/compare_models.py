@@ -32,18 +32,18 @@ Dussehra and Diwali.
 This study never writes to models/ or to train_model.py's outputs.
 
 Outputs:
-  outputs/model_comparison.csv / .json
-  outputs/comparison/wape_by_model.png, cv_wape_by_fold.png, training_time.png
+  outputs/reports/model_comparison.csv / .json
+  outputs/figures/comparison/wape_by_model.png, cv_wape_by_fold.png, training_time.png
 
 --max-series N is a smoke test: it keeps only the first N city + SKU series
-of each segment and writes everything to outputs/comparison_sample/ instead.
+of each segment and writes to outputs/reports/comparison_sample/ and
+outputs/figures/comparison_sample/ instead.
 
 Usage: .venv/bin/python src/compare_models.py [--trials 40] [--max-series N]
 """
 
 import argparse
 import json
-import sys
 import tempfile
 import time
 import warnings
@@ -60,18 +60,17 @@ from lightgbm import early_stopping
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from xgboost import XGBRegressor
 
-from config import CATEGORICAL_FEATURES, FEATURE_COLS, OUTPUTS_DIR, PROJECT_DIR, RANDOM_SEED
+from config import CATEGORICAL_FEATURES, FEATURE_COLS, FIGURES_DIR, RANDOM_SEED, REPORTS_DIR
 from metrics import seasonal_naive_scale, wape
 from train_model import (CV_FOLDS, EARLY_STOPPING, FEATURES_PATH, FINAL_TEST, MAX_TREES, SERIES_COLS, TARGET,
                          cv_folds, make_model, score_final_test, split_final, suggest_params)
 
-sys.path.insert(0, str(PROJECT_DIR))
 from risk_confusion_matrix import LABELS, forward_sum, risk_label  # noqa: E402
 
 warnings.filterwarnings("ignore", message="Failed to import numba")  # only speeds up DemandMAE, which is cheap
 
-OUT_DIR = OUTPUTS_DIR / "comparison"
-SAMPLE_DIR = OUTPUTS_DIR / "comparison_sample"
+OUT_DIR = FIGURES_DIR / "comparison"
+SAMPLE_DIR = "comparison_sample"  # under REPORTS_DIR (tables) and FIGURES_DIR (charts)
 DIWALI_FOLD = 3
 SEGMENTS = [("perishable", 1), ("nonperishable", 0)]
 EXTRA_COLS = ["date", "city", "sku_id", "category", "is_perishable", "stockout_flag", "true_demand",
@@ -486,14 +485,14 @@ def main():
     parser = argparse.ArgumentParser(description="Compare baselines, XGBoost, CatBoost and LightGBM.")
     parser.add_argument("--trials", type=int, default=40, help="Optuna trials per tuned model and segment")
     parser.add_argument("--max-series", type=int, default=None,
-                        help="smoke test: first N city + SKU series per segment, saved to outputs/comparison_sample/")
+                        help="smoke test: first N city + SKU series per segment, saved under outputs/{reports,figures}/comparison_sample/")
     args = parser.parse_args()
     if args.trials < 1:
         parser.error("--trials must be at least 1")
     if args.max_series is None:
-        table_dir, chart_dir = OUTPUTS_DIR, OUT_DIR
+        table_dir, chart_dir = REPORTS_DIR, OUT_DIR
     else:
-        table_dir = chart_dir = SAMPLE_DIR
+        table_dir, chart_dir = REPORTS_DIR / SAMPLE_DIR, FIGURES_DIR / SAMPLE_DIR
         table_dir.mkdir(parents=True, exist_ok=True)
 
     started = time.perf_counter()

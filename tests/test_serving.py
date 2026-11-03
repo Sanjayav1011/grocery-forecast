@@ -14,15 +14,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import dashboard
+from dashboard import app as dashboard
 import festival_uplift
 import run_pipeline
 import serving_risk_report
-from config import DATA_DIR, EVALUATION_END, LEAD_TIME_DAYS, OUTPUTS_DIR, SERVING_DATE
+from config import DATA_DIR, EVALUATION_END, LEAD_TIME_DAYS, REPORTS_DIR, SERVING_DATE
 from inventory import simulate_inventory
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# sha256 of data/pos_synthetic.csv as it was before the extension (rows up to EVALUATION_END)
+# sha256 of data/processed/pos_synthetic.csv as it was before the extension (rows up to EVALUATION_END)
 HISTORY_SHA256 = "926307ce63206b3cd2c532c4143235294ba01d9ba445a43907d1eeb74ec786cc"
 # evaluation outputs: train_model.py, risk_confusion_matrix.py's input and the model comparison
 EVALUATION_SHA256 = {
@@ -55,20 +55,20 @@ def test_history_rows_are_byte_identical_and_the_extension_reaches_the_serving_d
 
 
 def test_metrics_json_is_unchanged():
-    metrics = json.loads(require(OUTPUTS_DIR / "metrics.json").read_text())
+    metrics = json.loads(require(REPORTS_DIR / "metrics.json").read_text())
     assert metrics == json.loads((FIXTURES / "evaluation_metrics.json").read_text())
     assert metrics["final_test_window"] == ["2026-04-01", EVALUATION_END]
 
 
 @pytest.mark.parametrize("name", sorted(EVALUATION_SHA256))
 def test_evaluation_outputs_are_unchanged(name):
-    assert sha256(require(OUTPUTS_DIR / name).read_bytes()) == EVALUATION_SHA256[name]
+    assert sha256(require(REPORTS_DIR / name).read_bytes()) == EVALUATION_SHA256[name]
 
 
 def test_everything_served_counts_from_the_serving_date():
     for name in ["bigbasket_regional_forecast.csv", "bigbasket_tracked_daily_forecast.csv", "serving_opening_stock.csv"]:
         require(DATA_DIR / name)
-    require(OUTPUTS_DIR / serving_risk_report.STOCKOUT_PATH.name)
+    require(REPORTS_DIR / serving_risk_report.STOCKOUT_PATH.name)
     assert dashboard.data_date().isoformat() == SERVING_DATE
     window = pd.date_range(SERVING_START, periods=LEAD_TIME_DAYS).strftime("%Y-%m-%d").tolist()
     daily = pd.read_csv(DATA_DIR / "bigbasket_tracked_daily_forecast.csv")

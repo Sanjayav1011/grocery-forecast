@@ -3,14 +3,14 @@ generate_synthetic_data.py
 ----------------------------
 Generates a synthetic, SKU-level, multi-city daily POS dataset shaped like a
 REAL grocery POS/Shopify export, for ~300 real BigBasket products
-(data/sampled_products.csv, see sample_products.py). This exists so you can build and test the
+(data/processed/sampled_products.csv, see sample_products.py). This exists so you can build and test the
 whole pipeline end-to-end before wiring in your real store data.
 
 >>> WHEN YOU HAVE REAL DATA: replace the output of this script with your own
 >>> POS export using the SAME COLUMN NAMES, and everything downstream
 >>> (build_features.py, train_model.py) will work unchanged. <<<
 
-Schema produced (data/pos_synthetic.csv):
+Schema produced (data/processed/pos_synthetic.csv):
     date, city, store_id, sku_id, category, is_perishable,
     unit_price, on_promotion, units_sold, opening_stock, stockout_flag,
     days_until_delivery (days until the next delivery arrives; 1 = tomorrow),
@@ -22,7 +22,7 @@ config.SERVING_DATE for serving only, with its own random stream
 (config.EXTENSION_SEED) and the same demand formula, festival calendar,
 city multipliers and replenishment policy (picking up each series' stock,
 delivery cycle and recent demand), so the rows up to END_DATE stay
-byte-identical. It also writes data/serving_opening_stock.csv: each series'
+byte-identical. It also writes data/processed/serving_opening_stock.csv: each series'
 opening stock and days until delivery on the morning after SERVING_DATE
 (the first forecast day), simulated by the same policy.
 
@@ -81,7 +81,7 @@ TRAILING_DAYS = 14  # inventory.simulate_inventory orders up to the trailing 14-
 
 def build_sku_catalog(rng=RNG):
     """
-    One row per sampled real product (data/sampled_products.csv) with a base
+    One row per sampled real product (data/processed/sampled_products.csv) with a base
     daily demand driven by its attributes: cheaper -> more units, popular
     brands (by catalog count) -> more units, bigger packs -> fewer units.
     """

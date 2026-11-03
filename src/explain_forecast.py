@@ -22,13 +22,13 @@ Per product the 7 forecast days are converted day by day, then averaged.
 Drivers group the features (DRIVERS covers every model feature once).
 
 Outputs:
-  data/serving_explanations.csv   per tracked product x city at the serving
+  data/processed/serving_explanations.csv   per tracked product x city at the serving
                                   date (forecast SERVING_DATE + 1..7): baseline,
                                   forecast, units per driver and label context
-  outputs/shap_importance.json    global importance per segment: mean |SHAP|
+  outputs/reports/shap_importance.json    global importance per segment: mean |SHAP|
                                   per feature on the evaluation test window
                                   (train_model.FINAL_TEST, 1 Apr - 25 Aug 2026)
-  outputs/shap_importance_<segment>.png   the same, top 10 features
+  outputs/figures/shap_importance_<segment>.png   the same, top 10 features
 """
 
 import json
@@ -37,12 +37,12 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from config import DATA_DIR, FEATURE_COLS, LEAD_TIME_DAYS, MODELS_DIR, OUTPUTS_DIR, SERVING_DATE
+from config import DATA_DIR, FEATURE_COLS, LEAD_TIME_DAYS, MODELS_DIR, FIGURES_DIR, REPORTS_DIR, SERVING_DATE
 from festival_calendar import festival_df
 
 SEGMENTS = {"perishable": 1, "nonperishable": 0}
 SERVING_PATH = DATA_DIR / "serving_explanations.csv"
-IMPORTANCE_PATH = OUTPUTS_DIR / "shap_importance.json"
+IMPORTANCE_PATH = REPORTS_DIR / "shap_importance.json"
 FEATURES_PATH = DATA_DIR / "features.csv"
 TEST_WINDOW = ("2026-04-01", "2026-08-25")  # train_model.FINAL_TEST (importing train_model pulls in optuna)
 TOP_FEATURES = 10
@@ -161,7 +161,7 @@ def test_window_importance(features_path=FEATURES_PATH, window=TEST_WINDOW):
             "segments": result}
 
 
-def save_importance_charts(importance, outputs_dir=OUTPUTS_DIR):
+def save_importance_charts(importance, outputs_dir=FIGURES_DIR):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

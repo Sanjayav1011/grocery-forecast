@@ -4,9 +4,9 @@ sample_products.py
 Picks the REAL BigBasket products the synthetic POS history is generated
 for: a fixed-seed sample stratified across the 7 model categories.
 
-Inputs : data/archive_products.csv
-Outputs: data/category_map.csv      (BigBasket category -> model category rules)
-         data/sampled_products.csv  (the product master used by the generator
+Inputs : data/raw/archive_products.csv
+Outputs: data/processed/category_map.csv      (BigBasket category -> model category rules)
+         data/processed/sampled_products.csv  (the product master used by the generator
                                      and build_features.py)
 
 sku_id is the same BB###### id build_bigbasket_regional_risk.py assigns

@@ -5,7 +5,7 @@ Demand forecasts for every catalog product x city, from the trained models.
 
   - Tracked products (the ~300 with POS history) are scored directly by the
     LightGBM models over the next LEAD_TIME_DAYS after the latest data date.
-  - Every other catalog product mapped to a model category (data/category_map.csv)
+  - Every other catalog product mapped to a model category (data/processed/category_map.csv)
     borrows from its K nearest tracked products in the same category, by
     standardized (log MRP, log pack size, log brand popularity), preferring
     the same BigBasket sub-category: an inverse-distance weighted mean of the
@@ -17,15 +17,15 @@ Demand forecasts for every catalog product x city, from the trained models.
   - Untracked free samples, BigBasket's own packaging supplies ("MCIP
     Consumables" boxes, bags, labels, tape in household) and products with an
     MRP below MIN_MRP get no analog forecast; they are listed in
-    data/bigbasket_not_forecast.csv with reason "not forecast: free sample",
+    data/processed/bigbasket_not_forecast.csv with reason "not forecast: free sample",
     "not forecast: packaging" or "not forecast: no price".
 
 Also writes recent_daily, the trailing RECENT_DAYS mean demand (actual for
 tracked products, analog-estimated otherwise), which the regional risk
 report uses to simulate stock ordered before the forecast week.
 
-Output: data/bigbasket_regional_forecast.csv, and
-        data/bigbasket_tracked_daily_forecast.csv (each tracked product x
+Output: data/processed/bigbasket_regional_forecast.csv, and
+        data/processed/bigbasket_tracked_daily_forecast.csv (each tracked product x
         city's forecast per day, the values forecast_daily averages)
 Usage : python forecast_regional.py [--as-of YYYY-MM-DD] [--output PATH]
 """

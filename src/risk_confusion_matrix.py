@@ -10,9 +10,9 @@ same rule and horizon as the risk report in train_model.py: cover = stock /
 cover > H + 2 + shelf_life_days.
 
 Rows in the last H-1 days of each series have no full H-day window and are
-left out. Reads outputs/test_predictions.csv (written by src/train_model.py).
+left out. Reads outputs/reports/test_predictions.csv (written by src/train_model.py).
 
-Usage: .venv/bin/python risk_confusion_matrix.py
+Usage: .venv/bin/python src/risk_confusion_matrix.py
 """
 
 import sys
@@ -21,8 +21,8 @@ from pathlib import Path
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-from config import LEAD_TIME_DAYS, OUTPUTS_DIR  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config import LEAD_TIME_DAYS, REPORTS_DIR  # noqa: E402
 from inventory import classify_risk  # noqa: E402
 
 HORIZON = LEAD_TIME_DAYS
@@ -52,7 +52,7 @@ def print_matrix(actual, predicted, title):
 
 
 def main():
-    df = pd.read_csv(OUTPUTS_DIR / "test_predictions.csv", parse_dates=["date"])
+    df = pd.read_csv(REPORTS_DIR / "test_predictions.csv", parse_dates=["date"])
     df = df.sort_values(SERIES_COLS + ["date"]).reset_index(drop=True)
     gaps = df.groupby(SERIES_COLS)["date"].diff().dropna()
     assert (gaps == pd.Timedelta(days=1)).all(), "series have missing days; forward windows would be wrong"

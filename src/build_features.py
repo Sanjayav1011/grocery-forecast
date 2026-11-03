@@ -4,8 +4,8 @@ build_features.py
 Joins raw POS data (real or synthetic) with the 5-year festival calendar and
 engineers the feature set used for training.
 
-Input : data/pos_synthetic.csv   (swap for your real POS export -- same columns)
-Output: data/features.csv
+Input : data/processed/pos_synthetic.csv   (swap for your real POS export -- same columns)
+Output: data/processed/features.csv
 
 >>> TO USE YOUR REAL DATA: point RAW_POS_PATH at your export. As long as it
 >>> has the columns date, city, store_id, sku_id, category, is_perishable,
@@ -30,7 +30,7 @@ TOP_BRANDS = 30  # brands outside the 30 most popular share one "other" code
 
 def add_product_features(df):
     """
-    Product attributes from the product master (data/sampled_products.csv):
+    Product attributes from the product master (data/processed/sampled_products.csv):
     log_mrp, pack_size_value, and brand grouped to the TOP_BRANDS most
     popular brands (by catalog product count), the rest as "other".
     """

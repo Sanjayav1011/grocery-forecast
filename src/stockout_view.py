@@ -7,10 +7,10 @@ product x city:
   scope "model"     the tracked products on the first forecast day after
                     config.SERVING_DATE, from serving_risk_report.build_report
                     (the inventory.classify_risk rule behind
-                    outputs/serving_stockout_risk_report.csv), every risk status
-  scope "regional"  the forecast catalog, data/bigbasket_regional_inventory.csv
+                    outputs/reports/serving_stockout_risk_report.csv), every risk status
+  scope "regional"  the forecast catalog, data/processed/bigbasket_regional_inventory.csv
 
-Tracked products get sales history from data/pos_synthetic.csv over the days
+Tracked products get sales history from data/processed/pos_synthetic.csv over the days
 before the planning day (the day stock is counted): units sold in the last 7
 and 28 days, average daily sales over 28 days and trend = last 28 days vs the
 28 before. Analog catalog products have no history; their sales columns stay
@@ -20,7 +20,7 @@ Products listed under several SKUs are shown once per city
 (unique_products). All sales and stock figures come from synthetic data.
 
 filter_rows / sort_rows / brand_summary serve /api/stockout and
-/api/stockout/brands in dashboard.py.
+/api/stockout/brands in dashboard/app.py.
 """
 
 import json

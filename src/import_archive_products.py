@@ -2,14 +2,11 @@
 
 import io
 import zipfile
-from pathlib import Path
-
 import pandas as pd
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-from config import ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR
-OUTPUT_PATH = PROJECT_DIR / "data" / "archive_products.csv"
+from config import ARCHIVE_PATH, ARCHIVE_CSV
+OUTPUT_PATH = ARCHIVE_CSV
 
 
 def build():

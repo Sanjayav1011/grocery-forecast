@@ -1,6 +1,6 @@
 """
 Stockout views on the admin dashboard (src/stockout_view.py and the
-/api/stockout routes in dashboard.py), on a small hand-made data set:
+/api/stockout routes in dashboard/app.py), on a small hand-made data set:
 
   Delhi, tracked (sales history, 28 days before the planning day vs the 28 before):
     T1 Amul       10/day after 5/day   -> 280 units, rising +100%
@@ -23,7 +23,7 @@ from http.server import ThreadingHTTPServer
 import pandas as pd
 import pytest
 
-import dashboard
+from dashboard import app as dashboard
 import festival_uplift
 import product_detail
 import stockout_view
@@ -80,7 +80,7 @@ def fake_data(tmp_path, monkeypatch):
         tmp_path / "festival_calendar_5yr.csv", index=False)
     for module in (stockout_view, dashboard, product_detail, festival_uplift):
         monkeypatch.setattr(module, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(dashboard, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(dashboard, "REPORTS_DIR", tmp_path)
     festival_uplift._UPLIFTS.clear()
     monkeypatch.setattr(stockout_view, "OUTPUTS_DIR", tmp_path)
     monkeypatch.setattr(dashboard, "REGIONAL_INTELLIGENCE_CACHE", None)

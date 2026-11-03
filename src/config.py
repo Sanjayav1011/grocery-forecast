@@ -5,13 +5,16 @@ import os
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 # Core path definitions
-DATA_DIR = PROJECT_DIR / "data"
+RAW_DATA_DIR = PROJECT_DIR / "data" / "raw"  # inputs the pipeline never writes
+DATA_DIR = PROJECT_DIR / "data" / "processed"  # everything the pipeline writes
 MODELS_DIR = PROJECT_DIR / "models"
 OUTPUTS_DIR = PROJECT_DIR / "outputs"
+REPORTS_DIR = OUTPUTS_DIR / "reports"  # result tables (.csv / .json)
+FIGURES_DIR = OUTPUTS_DIR / "figures"  # charts (.png)
 
 # Data asset paths
-ARCHIVE_PATH = Path(os.getenv("ARCHIVE_PATH", DATA_DIR / "archive.zip"))
-ARCHIVE_CSV = DATA_DIR / "archive_products.csv"
+ARCHIVE_PATH = Path(os.getenv("ARCHIVE_PATH", RAW_DATA_DIR / "archive.zip"))
+ARCHIVE_CSV = RAW_DATA_DIR / "archive_products.csv"
 
 # Pipeline constants
 LEAD_TIME_DAYS = 7  # Forecast horizon used for leak-free lags
@@ -68,5 +71,5 @@ SHELF_LIFE_DAYS = {
 }
 
 # Ensure core directories exist
-for d in (DATA_DIR, MODELS_DIR, OUTPUTS_DIR):
-    d.mkdir(exist_ok=True)
+for d in (RAW_DATA_DIR, DATA_DIR, MODELS_DIR, REPORTS_DIR, FIGURES_DIR):
+    d.mkdir(parents=True, exist_ok=True)

@@ -174,7 +174,7 @@ def test_load_env_requires_smtp_settings(fake_project):
 
 
 def test_dashboard_send_alert_endpoint(fake_project):
-    import dashboard
+    from dashboard import app as dashboard
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

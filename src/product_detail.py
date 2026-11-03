@@ -8,7 +8,7 @@ from).
   history    the CHART_DAYS up to today: units sold, true demand and stockout
              days from the synthetic POS data (tracked products only)
   forecast   the LEAD_TIME_DAYS after today. Tracked products: LightGBM per day
-             (data/bigbasket_tracked_daily_forecast.csv, the values the
+             (data/processed/bigbasket_tracked_daily_forecast.csv, the values the
              regional forecast averages). Analog products: the same weighted,
              price-adjusted average of their analogs' DAILY forecasts, scaled so
              the 7-day mean is exactly the saved forecast_daily (the rescale

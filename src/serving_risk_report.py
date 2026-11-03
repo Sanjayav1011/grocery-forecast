@@ -3,15 +3,15 @@ serving_risk_report.py
 ------------------------
 Model risk report for the serving date (config.SERVING_DATE, the last day
 of data): every tracked product x city, with stock counted on the morning
-of the first forecast day (data/serving_opening_stock.csv, simulated by
+of the first forecast day (data/processed/serving_opening_stock.csv, simulated by
 generate_synthetic_data.extend) against its forecast for that day and the
-next LEAD_TIME_DAYS - 1 (data/bigbasket_tracked_daily_forecast.csv, from
+next LEAD_TIME_DAYS - 1 (data/processed/bigbasket_tracked_daily_forecast.csv, from
 the saved models), classified by the same inventory.classify_risk rule as
 the evaluation report.
 
-Writes outputs/serving_stockout_risk_report.csv and
+Writes outputs/reports/serving_stockout_risk_report.csv and
 serving_overstock_risk_report.csv, with the evaluation reports' columns.
-The evaluation reports (outputs/stockout_risk_report.csv /
+The evaluation reports (outputs/reports/stockout_risk_report.csv /
 overstock_risk_report.csv, 1 Apr - 25 Aug 2026, from train_model.py) are
 left as they are. The dashboard's model risk report and the vendor alerts
 read the serving reports.
@@ -19,11 +19,11 @@ read the serving reports.
 
 import pandas as pd
 
-from config import DATA_DIR, OUTPUTS_DIR
+from config import DATA_DIR, REPORTS_DIR
 from inventory import classify_risk
 
-STOCKOUT_PATH = OUTPUTS_DIR / "serving_stockout_risk_report.csv"
-OVERSTOCK_PATH = OUTPUTS_DIR / "serving_overstock_risk_report.csv"
+STOCKOUT_PATH = REPORTS_DIR / "serving_stockout_risk_report.csv"
+OVERSTOCK_PATH = REPORTS_DIR / "serving_overstock_risk_report.csv"
 # the columns of train_model.REPORT_COLS (checked by tests/test_serving.py)
 REPORT_COLS = ["date", "city", "sku_id", "product_name", "brand", "category", "predicted_units", "opening_stock",
                "days_of_cover", "horizon_demand", "avg_daily_pred", "days_until_delivery", "shelf_life_days",

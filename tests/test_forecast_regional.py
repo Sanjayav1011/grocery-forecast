@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import dashboard
+from dashboard import app as dashboard
 import forecast_regional
 from config import DATA_DIR
 from forecast_regional import (ANALOG, K_ANALOGS, NOT_FORECAST_PATH, PRICE_ADJ_RANGE, analog_forecasts,

@@ -15,7 +15,7 @@ import urllib.error
 import pandas as pd
 import pytest
 
-import dashboard
+from dashboard import app as dashboard
 import festival_uplift
 import product_detail
 from festival_calendar import build_calendar_table, festival_df

@@ -17,11 +17,11 @@ and the final model is scored once on FINAL_TEST, which no tuning step sees.
 
 Outputs:
     models/lgbm_perishable.txt / lgbm_nonperishable.txt
-  outputs/metrics.json
-  outputs/feature_importance_perishable.png / _nonperishable.png
-  outputs/stockout_risk_report.csv
-  outputs/overstock_risk_report.csv
-  outputs/test_predictions.csv
+  outputs/reports/metrics.json
+  outputs/figures/feature_importance_perishable.png / _nonperishable.png
+  outputs/reports/stockout_risk_report.csv
+  outputs/reports/overstock_risk_report.csv
+  outputs/reports/test_predictions.csv
 """
 
 import argparse
@@ -35,14 +35,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from lightgbm import LGBMRegressor, early_stopping
-from config import (DATA_DIR, MODELS_DIR, OUTPUTS_DIR, RANDOM_SEED, LEAD_TIME_DAYS, FEATURE_COLS,
+from config import (DATA_DIR, FIGURES_DIR, MODELS_DIR, REPORTS_DIR, RANDOM_SEED, LEAD_TIME_DAYS, FEATURE_COLS,
                     CATEGORICAL_FEATURES, SHELF_LIFE_DAYS)
 from inventory import classify_risk
 from metrics import evaluate, mape, seasonal_naive_scale, wape
 from sample_products import SAMPLED_PRODUCTS_PATH
 
 FEATURES_PATH = DATA_DIR / "features.csv"
-OUT_DIR = OUTPUTS_DIR
+OUT_DIR = REPORTS_DIR
 TARGET = "demand"
 SERIES_COLS = ["city", "sku_id"]
 
@@ -231,7 +231,7 @@ def train_segment(df, segment_name, n_trials):
     importances.tail(15).plot(kind="barh")
     plt.title(f"Feature importance - {segment_name}")
     plt.tight_layout()
-    plt.savefig(f"{OUT_DIR}/feature_importance_{segment_name}.png", dpi=110)
+    plt.savefig(f"{FIGURES_DIR}/feature_importance_{segment_name}.png", dpi=110)
     plt.close()
 
     return model, metrics, test
@@ -317,7 +317,7 @@ def main():
             "legacy": legacy,
         }, f, indent=2)
 
-    print(f"\nSaved metrics, risk reports, and feature-importance charts to {OUT_DIR}/")
+    print(f"\nSaved metrics, risk reports, and feature-importance charts to {OUT_DIR}/ and {FIGURES_DIR}/")
 
 
 if __name__ == "__main__":

@@ -11,8 +11,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-from config import PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, OUTPUTS_DIR, MODELS_DIR, LEAD_TIME_DAYS
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from config import (PROJECT_DIR, ARCHIVE_PATH, ARCHIVE_CSV, DATA_DIR, MODELS_DIR, LEAD_TIME_DAYS, RAW_DATA_DIR,
+                    REPORTS_DIR)
 import actions
 import explain_forecast
 import impact
@@ -32,7 +33,7 @@ SERVING_REPORTS = {"stockout": "serving_stockout_risk_report.csv", "overstock": 
 
 def dataset_paths():
     paths = {}
-    for folder in (DATA_DIR, OUTPUTS_DIR):
+    for folder in (RAW_DATA_DIR, DATA_DIR, REPORTS_DIR):
         for path in folder.glob("*.csv"):
             paths[path.name] = path
     return paths
@@ -181,7 +182,7 @@ def dashboard_payload(city):
 
 
 def read_csv(filename):
-    with (OUTPUTS_DIR / filename).open(newline="", encoding="utf-8") as file:
+    with (REPORTS_DIR / filename).open(newline="", encoding="utf-8") as file:
         return list(csv.DictReader(file))
 
 
@@ -191,7 +192,7 @@ def read_csv_from_path(path):
 
 
 def read_json(filename):
-    with (OUTPUTS_DIR / filename).open(encoding="utf-8") as file:
+    with (REPORTS_DIR / filename).open(encoding="utf-8") as file:
         return json.load(file)
 
 
@@ -1623,7 +1624,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_stockout(path, {key: values[0] for key, values in parse_qs(urlparse(self.path).query).items()})
             return
         if path == "/api/categories":
-            body = json.dumps(read_csv_from_path(DATA_DIR / "bigbasket_categories.csv")).encode("utf-8")
+            body = json.dumps(read_csv_from_path(RAW_DATA_DIR / "bigbasket_categories.csv")).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

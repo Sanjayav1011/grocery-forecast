@@ -213,7 +213,8 @@ def festival_uplift(dates: pd.Series, category: str, sigma_days: float = 2.5, pe
 
 if __name__ == "__main__":
     cal = build_calendar_table()
-    out_path = Path(__file__).resolve().parents[1] / "data" / "festival_calendar_5yr.csv"
+    from config import DATA_DIR
+    out_path = DATA_DIR / "festival_calendar_5yr.csv"
     cal.to_csv(out_path, index=False)
     print(f"Saved {len(cal)} rows to {out_path}")
     print(cal.head(10))

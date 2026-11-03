@@ -91,7 +91,7 @@ def test_risk_rule_on_a_hand_made_frame():
 
 
 def test_dashboard_unknown_dataset_is_json_404():
-    import dashboard
+    from dashboard import app as dashboard
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

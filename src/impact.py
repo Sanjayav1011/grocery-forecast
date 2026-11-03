@@ -5,7 +5,7 @@ Estimated business impact of the risk alerts, per city: rupee KPIs for the
 admin page and the report. Estimates on simulated sales and stock; the
 models, forecasts, risk rule and evaluation outputs are not changed.
 
-Evaluation window (outputs/test_predictions.csv, tracked products,
+Evaluation window (outputs/reports/test_predictions.csv, tracked products,
 1 Apr - 25 Aug 2026). Labels come from risk_confusion_matrix.py's rule:
 the next-7-day sum of the forecast (flagged) and of true demand (actual),
 each through inventory.classify_risk with the product's stock and days until
@@ -35,25 +35,24 @@ estimates:
   Diwali value at risk the Diwali-readiness "Order now" products
                        (festival_readiness): shortfall x MRP
 
-MRP: data/sampled_products.csv, missing ones filled with the category median
+MRP: data/processed/sampled_products.csv, missing ones filled with the category median
 (as generate_synthetic_data does).
 
-Outputs: outputs/impact_summary.json, outputs/impact_by_city.png.
+Outputs: outputs/reports/impact_summary.json, outputs/figures/impact_by_city.png.
 """
 
 import json
-import sys
 
 import numpy as np
 import pandas as pd
 
-from config import DATA_DIR, LEAD_TIME_DAYS, OUTPUTS_DIR, PROJECT_DIR
+from config import DATA_DIR, FIGURES_DIR, LEAD_TIME_DAYS, REPORTS_DIR
 from inventory import classify_risk
 
 HORIZON = LEAD_TIME_DAYS
 CARRYING_COST_PER_WEEK = 0.02  # share of the value of stock held one week (capital, space, handling)
-SUMMARY_PATH = OUTPUTS_DIR / "impact_summary.json"
-CHART_PATH = OUTPUTS_DIR / "impact_by_city.png"
+SUMMARY_PATH = REPORTS_DIR / "impact_summary.json"
+CHART_PATH = FIGURES_DIR / "impact_by_city.png"
 EVALUATION_KPIS = {
     "sales_protected": "Sales protected",
     "sales_missed": "Sales still missed",
@@ -83,7 +82,6 @@ def decision_rows(predictions):
     window reaching the next delivery) with flagged / actual labels and
     cycle_demand (true demand from that day until the next delivery).
     """
-    sys.path.insert(0, str(PROJECT_DIR))
     from risk_confusion_matrix import SERIES_COLS, forward_sum, risk_label  # the evaluation rule (imports sklearn)
 
     df = predictions.sort_values(SERIES_COLS + ["date"]).reset_index(drop=True)
@@ -206,7 +204,7 @@ def save_chart(summary, path=CHART_PATH):
 
 
 def build_summary():
-    predictions = pd.read_csv(OUTPUTS_DIR / "test_predictions.csv", parse_dates=["date"])
+    predictions = pd.read_csv(REPORTS_DIR / "test_predictions.csv", parse_dates=["date"])
     evaluation = evaluation_impact(predictions, prices())
     serving = serving_impact(sorted(predictions["city"].unique()))
     stock_date = (pd.Timestamp(serving["date"])).date().isoformat()

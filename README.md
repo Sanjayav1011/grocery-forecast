@@ -49,7 +49,7 @@ numbers as such.
 One pipeline, run by `run_pipeline.py`:
 
 ```
-BigBasket catalog (data/archive_products.csv)
+BigBasket catalog (data/raw/archive_products.csv)
   └─ sample_products.py      344 tracked products, 43 per model category (seeded)
       └─ generate_synthetic_data.py   5 years of daily POS history per product x city
           │                            (to 25 Aug 2026) + a serving extension to 29 Oct 2026
@@ -61,21 +61,21 @@ BigBasket catalog (data/archive_products.csv)
                       │                     products, K-nearest analogs for the rest
                       ├─ serving_risk_report.py   tracked products' risk on 30 Oct (alerts)
                       └─ build_bigbasket_regional_risk.py   stock simulation + risk rule
-                          └─ dashboard.py   customer storefront + admin views
+                          └─ dashboard/app.py   customer storefront + admin views
 ```
 
 | Path | What it is |
 |---|---|
 | `src/config.py` | Paths, lead time, feature list, shelf lives, replenishment and price constants |
 | `src/festival_calendar.py` | Festival dates 2021–2027, directional festival features, demand uplift curves |
-| `src/sample_products.py` | Maps BigBasket categories to 8 model categories (`data/category_map.csv`), samples tracked products |
+| `src/sample_products.py` | Maps BigBasket categories to 8 model categories (`data/processed/category_map.csv`), samples tracked products |
 | `src/generate_synthetic_data.py` | Synthetic POS history driven by product price, brand popularity, pack size, city, weekday, festivals, promotions |
 | `src/inventory.py` | Shared replenishment simulation and the stockout/overstock/reorder rule |
 | `src/build_features.py` | Unconstrained demand target, features, categorical encodings |
 | `src/metrics.py` | MAE, RMSE, WAPE, MASE, Bias% (MAPE kept as legacy) |
 | `src/train_model.py` | Time-series CV, Optuna tuning, final-test evaluation, model risk report |
-| `src/forecast_regional.py` | Catalog-wide forecasts per city (and each tracked product's forecast per day, `data/bigbasket_tracked_daily_forecast.csv`); free samples, store packaging and sub-₹1 products listed in `data/bigbasket_not_forecast.csv` |
-| `src/festival_uplift.py` | Festival-week demand uplift per city × category × festival from past years (`data/festival_uplift.csv`) and the admin "Festival planning" list |
+| `src/forecast_regional.py` | Catalog-wide forecasts per city (and each tracked product's forecast per day, `data/processed/bigbasket_tracked_daily_forecast.csv`); free samples, store packaging and sub-₹1 products listed in `data/processed/bigbasket_not_forecast.csv` |
+| `src/festival_uplift.py` | Festival-week demand uplift per city × category × festival from past years (`data/processed/festival_uplift.csv`) and the admin "Festival planning" list |
 | `src/build_bigbasket_regional_risk.py` | Catalog-wide risk report per city (plus `recent_avg_order` for perishables, used by the overstock actions) |
 | `src/compare_models.py` | Comparison study: baselines, XGBoost, CatBoost, LightGBM on the same folds |
 | `src/festival_readiness.py` | Festival readiness per product × city: festival-week demand vs stock and regular deliveries, shortfall, order-by date, status |
@@ -86,11 +86,43 @@ BigBasket catalog (data/archive_products.csv)
 | `src/stockout_view.py` | Tables, filters and brand summary behind the admin "stocks out first" views |
 | `src/product_detail.py` | Data for the admin product panel (`/api/product`): history, per-day forecast, festivals, stock, analogs |
 | `src/impact.py` | Estimated business impact per city: ₹ sales protected / missed, spoilage avoided, false-alarm cost (evaluation window) and ₹ at risk this week / Diwali value at risk (serving) |
+| `src/risk_confusion_matrix.py` | Confusion matrix of forecast vs true-demand risk labels on the final test window (`python src/risk_confusion_matrix.py`) |
 | `src/explain_forecast.py` | Forecast explanations from LightGBM SHAP (`pred_contrib`): per-product drivers in units/day (`/api/explain`) and global importance charts |
-| `dashboard.py` | Web dashboard (standard library HTTP server) |
+| `dashboard/app.py` | Web dashboard (standard library HTTP server) |
 | `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py`, `tests/test_impact.py`, `tests/test_actions.py` | pytest checks |
 
-Generated files go to `data/`, `models/` and `outputs/` (not tracked by git).
+## Project structure
+
+```
+grocery_forecast/
+├─ run_pipeline.py            the whole pipeline, one command
+├─ dashboard/
+│  └─ app.py                  web dashboard + JSON API (standard library HTTP server)
+├─ src/                       pipeline steps and shared modules (flat imports, `from config import ...`)
+│  ├─ config.py               every path below, dates and constants
+│  ├─ risk_confusion_matrix.py   offline check of the risk labels (evaluation window)
+│  └─ ...                     see the table above
+├─ config/vendors.json        vendor name and email(s) per city
+├─ data/                      not in git
+│  ├─ raw/                    inputs the pipeline never writes: archive_products.csv
+│  │                          (or archive.zip), bigbasket_categories.csv
+│  └─ processed/              everything the pipeline writes: pos_synthetic.csv,
+│                             features.csv, forecasts, inventory, explanations, ...
+├─ models/                    lgbm_*.txt and categorical_mappings.json (not in git),
+│                             params_*.json (tuned parameters, in git)
+├─ outputs/                   not in git
+│  ├─ reports/                result tables: metrics.json, test_predictions.csv, risk
+│  │                          reports, impact_summary.json, model_comparison.csv, ...
+│  ├─ figures/                charts (.png), comparison charts in figures/comparison/
+│  └─ alerts/                 vendor alert dry runs and sent_log.csv
+├─ tests/                     pytest checks (+ fixtures/)
+├─ requirements.txt, pytest.ini, .env.example
+└─ .env                       SMTP settings (not in git)
+```
+
+`config.py` defines the folders (`RAW_DATA_DIR`, `DATA_DIR` = `data/processed/`,
+`MODELS_DIR`, `REPORTS_DIR`, `FIGURES_DIR`, `OUTPUTS_DIR`); code never
+hard-codes them.
 
 ## Setup
 
@@ -104,15 +136,15 @@ pip install -r requirements.txt
 
 On macOS, LightGBM needs OpenMP: `brew install libomp`.
 
-The pipeline needs the catalog as `data/archive_products.csv`. If you only
-have the original `archive.zip` of BigBasket Excel files, put it in `data/`
+The pipeline needs the catalog as `data/raw/archive_products.csv`. If you only
+have the original `archive.zip` of BigBasket Excel files, put it in `data/raw/`
 and `pip install openpyxl`; the first pipeline step converts it.
 
 ## Run
 
 ```bash
 python run_pipeline.py                 # the whole pipeline, one command; prints per-step timings
-python dashboard.py                    # http://127.0.0.1:8000 (storefront) and /admin
+python dashboard/app.py                # http://127.0.0.1:8000 (storefront) and /admin
 python src/alerts.py --city all        # vendor alerts, dry run to outputs/alerts/
 python src/alerts.py --city Bengaluru --send   # really email (needs .env, see Email alerts)
 python -m pytest                       # after the pipeline has run
@@ -124,7 +156,7 @@ Saved models (`models/lgbm_*.txt`) are not in git. On a fresh clone,
 models, and every output, are byte-identical to the reference run. Measured
 on a 10-core Mac: about 6.5 minutes on a fresh clone (about 4.5 of them
 training) and under 2 minutes after that. A fresh clone needs only
-`data/archive_products.csv` (see Setup). After the first run the pipeline
+`data/raw/archive_products.csv` (see Setup). After the first run the pipeline
 reuses the models and skips training; pass `--retrain` to train again. To re-tune,
 run `python src/train_model.py --trials 120` (about 35 minutes).
 Retraining rewrites every evaluation result.
@@ -135,7 +167,7 @@ There are two separate dates, both in `src/config.py`.
 
 | | Dates | What uses it |
 |---|---|---|
-| **Evaluation period** | history 26 Aug 2021 – 25 Aug 2026 (`EVALUATION_END`); final test window 1 Apr – 25 Aug 2026 | training, tuning, CV folds, the final test, `metrics.json`, `test_predictions.csv`, the evaluation risk reports (`outputs/stockout_risk_report.csv` / `overstock_risk_report.csv`), `risk_confusion_matrix.py` and the model comparison: every accuracy figure |
+| **Evaluation period** | history 26 Aug 2021 – 25 Aug 2026 (`EVALUATION_END`); final test window 1 Apr – 25 Aug 2026 | training, tuning, CV folds, the final test, `metrics.json`, `test_predictions.csv`, the evaluation risk reports (`outputs/reports/stockout_risk_report.csv` / `overstock_risk_report.csv`), `risk_confusion_matrix.py` and the model comparison: every accuracy figure |
 | **Serving date** | `SERVING_DATE` = 29 Oct 2026, the last day of data | features up to it, forecasts for 30 Oct – 5 Nov from the saved models, the serving risk report, alerts, the regional risk report, festival uplifts and planning, and every date on the admin page |
 
 The synthetic history is extended from 26 Aug to 29 Oct 2026 for serving
@@ -144,7 +176,7 @@ unchanged, then appends the extension (`extend()`), drawn from its own seed
 (`EXTENSION_SEED`). The extension uses the same demand formula, festival
 calendar, city multipliers and replenishment policy, and picks up each
 series' stock, delivery cycle and recent demand where the history left off.
-`data/serving_opening_stock.csv` is the stock on the morning of 30 Oct,
+`data/processed/serving_opening_stock.csv` is the stock on the morning of 30 Oct,
 simulated by the same policy.
 
 Rows up to 25 Aug stay byte-identical, and nothing is retrained.
@@ -218,7 +250,7 @@ listed under several SKUs appear once (`unique_products()`).
 
 The model report's table holds every tracked product, not only the stockout
 rows: it is `serving_risk_report.build_report`, the same rows as
-`outputs/serving_stockout_risk_report.csv`. That is stock on 30 Oct against
+`outputs/reports/serving_stockout_risk_report.csv`. That is stock on 30 Oct against
 the next 7 days of forecast, under the `inventory.classify_risk` rule. All sales,
 stock, cover, delivery and reorder figures come from synthetic or
 simulated data, and the views say so.
@@ -253,7 +285,7 @@ was made from.
 - **Tracked products:** the last 60 days of units sold (solid) and true
   demand (dotted), stockout days shaded, then the next 7 days of forecast
   (dashed). The forecast is LightGBM per day
-  (`data/bigbasket_tracked_daily_forecast.csv`), the same values the regional
+  (`data/processed/bigbasket_tracked_daily_forecast.csv`), the same values the regional
   forecast averages: their mean equals `forecast_daily`.
 - **Analog products:** only the forecast, labelled "estimated, from 5
   analogs". Each day is the weighted, price-adjusted average of the 5
@@ -264,7 +296,7 @@ was made from.
   5 tracked products, with their normalised inverse-distance weights, price
   factors (0.5–2×) and their own forecasts. `forecast_regional.py` saves
   these as `analog_weights` / `analog_price_adj`, plus the tracked daily
-  forecasts in `data/bigbasket_tracked_daily_forecast.csv`. The forecast
+  forecasts in `data/processed/bigbasket_tracked_daily_forecast.csv`. The forecast
   values are unchanged.
 - **On every chart:** festival dates from the festival calendar as labelled
   vertical markers, and the current opening stock as a horizontal line. If
@@ -357,10 +389,10 @@ forecast. The top drivers are:
 - **Non-perishable:** the recent 28-day average dominates.
 
 **Outputs:**
-- `data/serving_explanations.csv`: one row per tracked product × city.
-- `outputs/shap_importance.json`.
-- `outputs/shap_importance_perishable.png` and
-  `outputs/shap_importance_nonperishable.png`: the same charts as the card.
+- `data/processed/serving_explanations.csv`: one row per tracked product × city.
+- `outputs/reports/shap_importance.json`.
+- `outputs/figures/shap_importance_perishable.png` and
+  `outputs/figures/shap_importance_nonperishable.png`: the same charts as the card.
 
 ```
 GET /api/explain?city=<city>&sku_id=<sku>
@@ -456,7 +488,7 @@ freshness check cut transfers from 28 (10 model, 18 regional) to 9.
 
 `src/impact.py` (the last pipeline step, a few seconds) estimates the
 rupee value of the risk alerts per city. It writes
-`outputs/impact_summary.json` and `outputs/impact_by_city.png` (one panel
+`outputs/reports/impact_summary.json` and `outputs/figures/impact_by_city.png` (one panel
 per KPI, one bar per city). On the admin page, the "Business impact" card
 sits under "What drives demand": a tile per KPI with a one-line
 explanation, then a table per city with a total row. Everything is
@@ -465,7 +497,7 @@ labelled as an estimate on simulated sales and stock. Values are at MRP
 generator does.
 
 **Evaluation window** (1 Apr–25 Aug 2026, tracked products,
-`outputs/test_predictions.csv`). Each product × city × day gets two labels
+`outputs/reports/test_predictions.csv`). Each product × city × day gets two labels
 from the same delivery-aware rule as `risk_confusion_matrix.py`
 (`inventory.classify_risk` on the next 7 days):
 - **Flagged:** the rule applied to the forecast.
@@ -607,7 +639,7 @@ GET /api/readiness?city=&festival=&status=&category=&brand=&sort=stock|demand|sh
 ## Email alerts
 
 `src/alerts.py` emails each city's vendor the rows from the serving model
-risk report (`outputs/serving_stockout_risk_report.csv` /
+risk report (`outputs/reports/serving_stockout_risk_report.csv` /
 `serving_overstock_risk_report.csv`, stock on 30 Oct), the same rows the
 admin page shows. The evaluation reports are not used for alerts. It doesn't re-forecast or change the risk
 rule.
@@ -683,7 +715,7 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
   city — 344 directly from the models, the rest by analogs. 762 products fit
   no model category, 6 are non-food items in food categories, and 31 are
   "not forecast", each listed with its reason in
-  `data/bigbasket_not_forecast.csv`: 1 free sample (by name), 28 store
+  `data/processed/bigbasket_not_forecast.csv`: 1 free sample (by name), 28 store
   packaging supplies ("MCIP Consumables" boxes, bags, labels, tape — by name,
   household only) and 2 products with an MRP below ₹1 (both ₹0). Cheap real
   products such as ₹3.75 biscuits and ₹3 shampoo sachets are forecast. The
@@ -702,7 +734,7 @@ Fold 3 covers Navratri, Dussehra and Diwali and is the headline festival metric.
   and the Diwali spike (8 Nov) falls after the 7-day window. The forecasts
   do climb towards it: tracked sweets rise about ×3 from 30 Oct to 5 Nov.
 
-`outputs/metrics.json` has every number above plus MAE, RMSE and the tuned
+`outputs/reports/metrics.json` has every number above plus MAE, RMSE and the tuned
 parameters.
 
 ## Model comparison
@@ -769,10 +801,10 @@ python src/compare_models.py --trials 2 --max-series 20   # ~3-minute smoke test
 The comparison's tuned LightGBM uses early stopping, so its numbers differ
 slightly from the production models in [Results](#results).
 
-Outputs: `outputs/model_comparison.csv` / `.json` and charts in
-`outputs/comparison/` (`wape_by_model.png`, `cv_wape_by_fold.png`,
+Outputs: `outputs/reports/model_comparison.csv` / `.json` and charts in
+`outputs/figures/comparison/` (`wape_by_model.png`, `cv_wape_by_fold.png`,
 `training_time.png`). A `--max-series` run writes to
-`outputs/comparison_sample/` instead. The script ends by listing every metric
+`outputs/reports/comparison_sample/` and `outputs/figures/comparison_sample/` instead. The script ends by listing every metric
 on which another model beats tuned LightGBM.
 
 **Run time:** almost all of it is tuning, and CatBoost dominates. Measured on a
@@ -886,7 +918,7 @@ smaller budget stays fair.
 
 ## Using real data
 
-Replace `data/pos_synthetic.csv` with a POS export that has the same columns:
+Replace `data/processed/pos_synthetic.csv` with a POS export that has the same columns:
 
 | Column | Notes |
 |---|---|
@@ -897,7 +929,7 @@ Replace `data/pos_synthetic.csv` with a POS export that has the same columns:
 | `stockout_flag` | 1 if the product ran out that day |
 | `days_until_delivery` | optional; without it the risk rule assumes the 7-day lead time |
 
-`data/sampled_products.csv` is the product master (`sku_id`, `brand`, `mrp`,
+`data/processed/sampled_products.csv` is the product master (`sku_id`, `brand`, `mrp`,
 `pack_size_value`, `brand_catalog_count`); keep it in step with your
 products. Then run `build_features.py`, `festival_uplift.py`,
 `train_model.py --trials 40`, `forecast_regional.py` and
