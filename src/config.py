@@ -12,6 +12,13 @@ OUTPUTS_DIR = PROJECT_DIR / "outputs"
 REPORTS_DIR = OUTPUTS_DIR / "reports"  # result tables (.csv / .json)
 FIGURES_DIR = OUTPUTS_DIR / "figures"  # charts (.png)
 
+# Real-data validation on Corporación Favorita (validation/favorita/): raw CSVs
+# and cached parquet subsets (not in git), and the experiment's own results
+FAVORITA_DATA_DIR = PROJECT_DIR / "data" / "favorita"
+FAVORITA_DIR = PROJECT_DIR / "validation" / "favorita"
+FAVORITA_REPORTS_DIR = FAVORITA_DIR / "outputs" / "reports"
+FAVORITA_FIGURES_DIR = FAVORITA_DIR / "outputs" / "figures"
+
 # Data asset paths
 ARCHIVE_PATH = Path(os.getenv("ARCHIVE_PATH", RAW_DATA_DIR / "archive.zip"))
 ARCHIVE_CSV = RAW_DATA_DIR / "archive_products.csv"

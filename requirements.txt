@@ -9,3 +9,4 @@ pytest==9.1.1
 xgboost==3.4.1   # model comparison only (src/compare_models.py)
 catboost==1.2.10  # model comparison only (src/compare_models.py)
 certifi>=2024.2.2  # CA bundle for SMTP STARTTLS (alerts.py) on macOS
+pyarrow==26.0.1   # parquet cache for the Favorita validation (validation/favorita/)

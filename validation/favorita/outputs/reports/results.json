@@ -1,0 +1,676 @@
+{
+  "experiment": "Real-data validation on Corporación Favorita (Ecuador): 7-day-ahead daily demand per store x item",
+  "generated": "2026-11-07T22:28:52",
+  "dates": {
+    "subset": [
+      "2016-01-01",
+      "2017-08-15"
+    ],
+    "train": [
+      "2016-01-01",
+      "2017-03-31"
+    ],
+    "test": [
+      "2017-04-01",
+      "2017-08-15"
+    ],
+    "tuning_fit": [
+      "2016-01-01",
+      "2017-01-24"
+    ],
+    "tuning_valid": [
+      "2017-02-01",
+      "2017-03-31"
+    ],
+    "earthquake_flag": [
+      "2016-04-16",
+      "2016-05-16"
+    ]
+  },
+  "stores": [
+    {
+      "store_nbr": 44,
+      "city": "Quito",
+      "state": "Pichincha",
+      "type": "A",
+      "cluster": 5,
+      "transactions": 2563031,
+      "city_rank": 1,
+      "reason": "busiest store in Quito, #1 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 24,
+      "city": "Guayaquil",
+      "state": "Guayas",
+      "type": "D",
+      "cluster": 1,
+      "transactions": 1260891,
+      "city_rank": 2,
+      "reason": "busiest store in Guayaquil, #2 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 37,
+      "city": "Cuenca",
+      "state": "Azuay",
+      "type": "D",
+      "cluster": 2,
+      "transactions": 849227,
+      "city_rank": 3,
+      "reason": "busiest store in Cuenca, #3 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 50,
+      "city": "Ambato",
+      "state": "Tungurahua",
+      "type": "A",
+      "cluster": 14,
+      "transactions": 1485715,
+      "city_rank": 4,
+      "reason": "busiest store in Ambato, #4 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 5,
+      "city": "Santo Domingo",
+      "state": "Santo Domingo de los Tsachilas",
+      "type": "D",
+      "cluster": 4,
+      "transactions": 741056,
+      "city_rank": 5,
+      "reason": "busiest store in Santo Domingo, #5 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 40,
+      "city": "Machala",
+      "state": "El Oro",
+      "type": "C",
+      "cluster": 3,
+      "transactions": 797339,
+      "city_rank": 6,
+      "reason": "busiest store in Machala, #6 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 11,
+      "city": "Cayambe",
+      "state": "Pichincha",
+      "type": "B",
+      "cluster": 6,
+      "transactions": 1354574,
+      "city_rank": 7,
+      "reason": "busiest store in Cayambe, #7 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 12,
+      "city": "Latacunga",
+      "state": "Cotopaxi",
+      "type": "C",
+      "cluster": 15,
+      "transactions": 703182,
+      "city_rank": 8,
+      "reason": "busiest store in Latacunga, #8 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 53,
+      "city": "Manta",
+      "state": "Manabi",
+      "type": "D",
+      "cluster": 13,
+      "transactions": 687312,
+      "city_rank": 9,
+      "reason": "busiest store in Manta, #9 city by transactions 2016-01-01..2017-08-15"
+    },
+    {
+      "store_nbr": 27,
+      "city": "Daule",
+      "state": "Guayas",
+      "type": "D",
+      "cluster": 1,
+      "transactions": 939372,
+      "city_rank": 10,
+      "reason": "busiest store in Daule, #10 city by transactions 2016-01-01..2017-08-15"
+    }
+  ],
+  "items": {
+    "top_items_per_store": 1500,
+    "ranked_on": [
+      "2016-01-01",
+      "2017-03-31"
+    ],
+    "items_per_store_sold_at_least_once": {
+      "5": 3490,
+      "11": 3101,
+      "12": 2592,
+      "24": 3554,
+      "27": 3553,
+      "37": 3555,
+      "40": 2640,
+      "44": 3656,
+      "50": 3625,
+      "53": 3493
+    },
+    "items_kept_per_store": {
+      "5": 1500,
+      "11": 1500,
+      "12": 1500,
+      "24": 1500,
+      "27": 1500,
+      "37": 1500,
+      "40": 1500,
+      "44": 1500,
+      "50": 1500,
+      "53": 1500
+    },
+    "unique_items_kept": 3016,
+    "sales_share_covered_%": 85.34,
+    "sales_share_covered_by_store_%": {
+      "5": 83.1,
+      "11": 90.36,
+      "12": 91.64,
+      "24": 85.17,
+      "27": 85.92,
+      "37": 83.67,
+      "40": 92.22,
+      "44": 83.47,
+      "50": 79.76,
+      "53": 84.53
+    }
+  },
+  "cleaning": {
+    "raw_rows": 12072450,
+    "negative_sales_clipped": 759,
+    "onpromotion_missing_filled": 0,
+    "grid_rows": 8725628,
+    "zero_sale_days_filled": 1195104,
+    "closed_store_days": 29925,
+    "modelling_rows": 8380740,
+    "negative_sales_after_cleaning": 0
+  },
+  "rows": {
+    "perishable": {
+      "train": 1920088,
+      "test": 620062,
+      "series": 4526
+    },
+    "nonperishable": {
+      "train": 4405670,
+      "test": 1434920,
+      "series": 10474
+    },
+    "combined": {
+      "train": 6325758,
+      "test": 2054982,
+      "series": 15000
+    }
+  },
+  "target": "demand = unit_sales clipped at 0 (no stock data, so not un-censored)",
+  "features": [
+    "on_promotion",
+    "day_of_week",
+    "is_weekend",
+    "month",
+    "week_of_year",
+    "is_month_start",
+    "is_month_end",
+    "is_holiday",
+    "is_national_holiday",
+    "is_local_holiday",
+    "is_event",
+    "is_work_day",
+    "days_until_next_holiday",
+    "days_since_last_holiday",
+    "earthquake",
+    "oil_price_lag7",
+    "lag_7",
+    "lag_14",
+    "lag_21",
+    "lag_364",
+    "roll_mean_7_lag7",
+    "roll_mean_14_lag7",
+    "roll_mean_28_lag7",
+    "roll_std_14_lag7",
+    "store_nbr_code",
+    "item_nbr_code",
+    "family_code",
+    "city_code"
+  ],
+  "categorical_features": [
+    "store_nbr_code",
+    "item_nbr_code",
+    "family_code",
+    "city_code"
+  ],
+  "parameters": {
+    "perishable": {
+      "source": "main project's tuned parameters (models/params_perishable.json)",
+      "n_trials": 0,
+      "final_fit_seconds": 34.7,
+      "params": {
+        "objective": "tweedie",
+        "tweedie_variance_power": 1.4436628387595156,
+        "learning_rate": 0.015046038949735878,
+        "num_leaves": 30,
+        "max_depth": 5,
+        "min_child_samples": 197,
+        "subsample": 0.7219472968418418,
+        "subsample_freq": 1,
+        "colsample_bytree": 0.9206438499787184,
+        "reg_alpha": 9.009937010968205,
+        "reg_lambda": 0.008000113053331807,
+        "n_estimators": 1978
+      }
+    },
+    "nonperishable": {
+      "source": "main project's tuned parameters (models/params_nonperishable.json)",
+      "n_trials": 0,
+      "final_fit_seconds": 69.5,
+      "params": {
+        "objective": "tweedie",
+        "tweedie_variance_power": 1.3007579373238245,
+        "learning_rate": 0.015087908807997647,
+        "num_leaves": 38,
+        "max_depth": 4,
+        "min_child_samples": 21,
+        "subsample": 0.7191518712946011,
+        "subsample_freq": 1,
+        "colsample_bytree": 0.6987787823363422,
+        "reg_alpha": 5.20931102430001,
+        "reg_lambda": 0.11382217320682449,
+        "n_estimators": 2520
+      }
+    }
+  },
+  "parameters_note": "Optuna tuning (30 trials per model) was stopped early: 3 perishable trials and 0 non-perishable trials had finished (best perishable tuning-window WAPE 38.20%). With fewer than 10 trials finished, the main project's tuned parameters (models/params_<segment>.json, tuned on the synthetic data) were used for both models instead.",
+  "mase_scale": {
+    "perishable": 6.0393,
+    "nonperishable": 6.0732,
+    "combined": 6.0629
+  },
+  "metrics": {
+    "perishable": {
+      "LightGBM": {
+        "n_rows": 620062,
+        "MAE": 4.582,
+        "RMSE": 9.707,
+        "WAPE_%": 39.2,
+        "MASE": 0.759,
+        "Bias_%": 0.04
+      },
+      "Seasonal naive": {
+        "n_rows": 620062,
+        "MAE": 5.671,
+        "RMSE": 11.946,
+        "WAPE_%": 48.52,
+        "MASE": 0.939,
+        "Bias_%": 0.65
+      },
+      "Moving average 7d": {
+        "n_rows": 620062,
+        "MAE": 5.318,
+        "RMSE": 11.766,
+        "WAPE_%": 45.49,
+        "MASE": 0.881,
+        "Bias_%": 0.74
+      },
+      "Moving average 28d": {
+        "n_rows": 620062,
+        "MAE": 5.311,
+        "RMSE": 11.639,
+        "WAPE_%": 45.44,
+        "MASE": 0.879,
+        "Bias_%": 1.42
+      }
+    },
+    "nonperishable": {
+      "LightGBM": {
+        "n_rows": 1434920,
+        "MAE": 4.548,
+        "RMSE": 18.084,
+        "WAPE_%": 51.5,
+        "MASE": 0.749,
+        "Bias_%": -1.28
+      },
+      "Seasonal naive": {
+        "n_rows": 1434920,
+        "MAE": 5.765,
+        "RMSE": 24.716,
+        "WAPE_%": 65.29,
+        "MASE": 0.949,
+        "Bias_%": 1.07
+      },
+      "Moving average 7d": {
+        "n_rows": 1434920,
+        "MAE": 5.207,
+        "RMSE": 20.602,
+        "WAPE_%": 58.97,
+        "MASE": 0.857,
+        "Bias_%": 1.07
+      },
+      "Moving average 28d": {
+        "n_rows": 1434920,
+        "MAE": 5.19,
+        "RMSE": 19.829,
+        "WAPE_%": 58.77,
+        "MASE": 0.855,
+        "Bias_%": 1.49
+      }
+    },
+    "combined": {
+      "LightGBM": {
+        "n_rows": 2054982,
+        "MAE": 4.558,
+        "RMSE": 16.024,
+        "WAPE_%": 47.02,
+        "MASE": 0.752,
+        "Bias_%": -0.8
+      },
+      "Seasonal naive": {
+        "n_rows": 2054982,
+        "MAE": 5.737,
+        "RMSE": 21.67,
+        "WAPE_%": 59.19,
+        "MASE": 0.946,
+        "Bias_%": 0.92
+      },
+      "Moving average 7d": {
+        "n_rows": 2054982,
+        "MAE": 5.241,
+        "RMSE": 18.388,
+        "WAPE_%": 54.06,
+        "MASE": 0.864,
+        "Bias_%": 0.95
+      },
+      "Moving average 28d": {
+        "n_rows": 2054982,
+        "MAE": 5.226,
+        "RMSE": 17.76,
+        "WAPE_%": 53.92,
+        "MASE": 0.862,
+        "Bias_%": 1.46
+      }
+    }
+  },
+  "holiday_vs_normal_wape_%": {
+    "perishable": {
+      "holiday_days": {
+        "n_rows": 26012,
+        "LightGBM": 41.22,
+        "Seasonal naive": 49.81,
+        "Moving average 7d": 44.17,
+        "Moving average 28d": 44.64
+      },
+      "normal_days": {
+        "n_rows": 594050,
+        "LightGBM": 39.1,
+        "Seasonal naive": 48.46,
+        "Moving average 7d": 45.56,
+        "Moving average 28d": 45.47
+      }
+    },
+    "nonperishable": {
+      "holiday_days": {
+        "n_rows": 60987,
+        "LightGBM": 50.65,
+        "Seasonal naive": 63.39,
+        "Moving average 7d": 56.8,
+        "Moving average 28d": 55.8
+      },
+      "normal_days": {
+        "n_rows": 1373933,
+        "LightGBM": 51.54,
+        "Seasonal naive": 65.38,
+        "Moving average 7d": 59.07,
+        "Moving average 28d": 58.91
+      }
+    },
+    "combined": {
+      "holiday_days": {
+        "n_rows": 86999,
+        "LightGBM": 47.25,
+        "Seasonal naive": 58.5,
+        "Moving average 7d": 52.25,
+        "Moving average 28d": 51.79
+      },
+      "normal_days": {
+        "n_rows": 1967983,
+        "LightGBM": 47.01,
+        "Seasonal naive": 59.22,
+        "Moving average 7d": 54.15,
+        "Moving average 28d": 54.02
+      }
+    }
+  },
+  "test_holidays": [
+    {
+      "date": "2017-04-01",
+      "stores": [
+        12
+      ]
+    },
+    {
+      "date": "2017-04-13",
+      "stores": [
+        37
+      ]
+    },
+    {
+      "date": "2017-04-14",
+      "stores": [
+        5,
+        11,
+        12,
+        24,
+        27,
+        37,
+        40,
+        44,
+        50,
+        53
+      ]
+    },
+    {
+      "date": "2017-05-01",
+      "stores": [
+        5,
+        11,
+        12,
+        24,
+        27,
+        37,
+        40,
+        44,
+        50,
+        53
+      ]
+    },
+    {
+      "date": "2017-05-13",
+      "stores": [
+        5,
+        11,
+        12,
+        24,
+        27,
+        37,
+        40,
+        44,
+        50,
+        53
+      ]
+    },
+    {
+      "date": "2017-05-26",
+      "stores": [
+        5,
+        11,
+        12,
+        24,
+        27,
+        37,
+        40,
+        44,
+        50,
+        53
+      ]
+    },
+    {
+      "date": "2017-06-25",
+      "stores": [
+        12,
+        40
+      ]
+    },
+    {
+      "date": "2017-07-03",
+      "stores": [
+        5
+      ]
+    },
+    {
+      "date": "2017-07-23",
+      "stores": [
+        11
+      ]
+    },
+    {
+      "date": "2017-07-24",
+      "stores": [
+        24
+      ]
+    },
+    {
+      "date": "2017-07-25",
+      "stores": [
+        24
+      ]
+    },
+    {
+      "date": "2017-08-11",
+      "stores": [
+        5,
+        11,
+        12,
+        24,
+        27,
+        37,
+        40,
+        44,
+        50,
+        53
+      ]
+    }
+  ],
+  "wape_by_store_%": {
+    "5": {
+      "city": "Santo Domingo",
+      "n_rows": 205500,
+      "LightGBM": 54.91,
+      "Seasonal naive": 68.92,
+      "Moving average 7d": 59.24,
+      "Moving average 28d": 59.56
+    },
+    "11": {
+      "city": "Cayambe",
+      "n_rows": 205500,
+      "LightGBM": 49.31,
+      "Seasonal naive": 61.96,
+      "Moving average 7d": 55.16,
+      "Moving average 28d": 53.41
+    },
+    "12": {
+      "city": "Latacunga",
+      "n_rows": 205500,
+      "LightGBM": 60.05,
+      "Seasonal naive": 77.73,
+      "Moving average 7d": 66.14,
+      "Moving average 28d": 64.12
+    },
+    "24": {
+      "city": "Guayaquil",
+      "n_rows": 205500,
+      "LightGBM": 44.68,
+      "Seasonal naive": 55.71,
+      "Moving average 7d": 49.13,
+      "Moving average 28d": 49.37
+    },
+    "27": {
+      "city": "Daule",
+      "n_rows": 205500,
+      "LightGBM": 47.07,
+      "Seasonal naive": 58.12,
+      "Moving average 7d": 54.19,
+      "Moving average 28d": 54.44
+    },
+    "37": {
+      "city": "Cuenca",
+      "n_rows": 205500,
+      "LightGBM": 49.95,
+      "Seasonal naive": 62.98,
+      "Moving average 7d": 54.54,
+      "Moving average 28d": 54.5
+    },
+    "40": {
+      "city": "Machala",
+      "n_rows": 205482,
+      "LightGBM": 55.79,
+      "Seasonal naive": 74.13,
+      "Moving average 7d": 65.39,
+      "Moving average 28d": 65.43
+    },
+    "44": {
+      "city": "Quito",
+      "n_rows": 205500,
+      "LightGBM": 37.13,
+      "Seasonal naive": 45.7,
+      "Moving average 7d": 46.03,
+      "Moving average 28d": 46.46
+    },
+    "50": {
+      "city": "Ambato",
+      "n_rows": 205500,
+      "LightGBM": 46.88,
+      "Seasonal naive": 59.2,
+      "Moving average 7d": 55.08,
+      "Moving average 28d": 55.22
+    },
+    "53": {
+      "city": "Manta",
+      "n_rows": 205500,
+      "LightGBM": 51.44,
+      "Seasonal naive": 63.52,
+      "Moving average 7d": 57.57,
+      "Moving average 28d": 57.28
+    }
+  },
+  "run_time_seconds": {
+    "data_and_features": 3.1,
+    "total": 110.4
+  },
+  "examples": [
+    {
+      "label": "top perishable",
+      "store_nbr": 44,
+      "city": "Quito",
+      "item_nbr": 1503844,
+      "family": "PRODUCE",
+      "perishable": 1,
+      "WAPE_%": 22.9
+    },
+    {
+      "label": "top non-perishable",
+      "store_nbr": 24,
+      "city": "Guayaquil",
+      "item_nbr": 2042941,
+      "family": "BEVERAGES",
+      "perishable": 0,
+      "WAPE_%": 28.77
+    },
+    {
+      "label": "median-volume item",
+      "store_nbr": 53,
+      "city": "Manta",
+      "item_nbr": 1242666,
+      "family": "GROCERY I",
+      "perishable": 0,
+      "WAPE_%": 55.63
+    }
+  ]
+}

@@ -89,7 +89,8 @@ BigBasket catalog (data/raw/archive_products.csv)
 | `src/risk_confusion_matrix.py` | Confusion matrix of forecast vs true-demand risk labels on the final test window (`python src/risk_confusion_matrix.py`) |
 | `src/explain_forecast.py` | Forecast explanations from LightGBM SHAP (`pred_contrib`): per-product drivers in units/day (`/api/explain`) and global importance charts |
 | `dashboard/app.py` | Web dashboard (standard library HTTP server) |
-| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py`, `tests/test_impact.py`, `tests/test_actions.py` | pytest checks |
+| `validation/favorita/favorita_data.py`, `run_validation.py` | Real-data validation on Corporación Favorita: subset loading, cleaning, holiday features, training and evaluation (see [Real-data validation](#real-data-validation-favorita)) |
+| `tests/test_pipeline.py`, `tests/test_alerts.py`, `tests/test_forecast_regional.py`, `tests/test_compare_models.py`, `tests/test_dashboard_filters.py`, `tests/test_product_panel.py`, `tests/test_occasion_planning.py`, `tests/test_serving.py`, `tests/test_festival_readiness.py`, `tests/test_category_mapping.py`, `tests/test_explain_forecast.py`, `tests/test_impact.py`, `tests/test_actions.py`, `tests/test_favorita_validation.py` | pytest checks |
 
 ## Project structure
 
@@ -102,12 +103,15 @@ grocery_forecast/
 │  ├─ config.py               every path below, dates and constants
 │  ├─ risk_confusion_matrix.py   offline check of the risk labels (evaluation window)
 │  └─ ...                     see the table above
+├─ validation/favorita/       real-data validation on Favorita: code, and outputs/
+│                             reports/results.json + figures/ (in git)
 ├─ config/vendors.json        vendor name and email(s) per city
 ├─ data/                      not in git
 │  ├─ raw/                    inputs the pipeline never writes: archive_products.csv
 │  │                          (or archive.zip), bigbasket_categories.csv
-│  └─ processed/              everything the pipeline writes: pos_synthetic.csv,
-│                             features.csv, forecasts, inventory, explanations, ...
+│  ├─ processed/              everything the pipeline writes: pos_synthetic.csv,
+│  │                          features.csv, forecasts, inventory, explanations, ...
+│  └─ favorita/               Favorita raw CSVs + cached parquet subsets
 ├─ models/                    lgbm_*.txt and categorical_mappings.json (not in git),
 │                             params_*.json (tuned parameters, in git)
 ├─ outputs/                   not in git
@@ -121,7 +125,8 @@ grocery_forecast/
 ```
 
 `config.py` defines the folders (`RAW_DATA_DIR`, `DATA_DIR` = `data/processed/`,
-`MODELS_DIR`, `REPORTS_DIR`, `FIGURES_DIR`, `OUTPUTS_DIR`); code never
+`MODELS_DIR`, `REPORTS_DIR`, `FIGURES_DIR`, `OUTPUTS_DIR`, and `FAVORITA_DATA_DIR`,
+`FAVORITA_REPORTS_DIR`, `FAVORITA_FIGURES_DIR` for the validation); code never
 hard-codes them.
 
 ## Setup
@@ -815,6 +820,91 @@ models and both segments, plus about an hour of fixed work, so
 `--trials 40` is about 17 hours, `--trials 10` about 5 hours and
 `--trials 5` about 3 hours. Every model gets the same `--trials`, so a
 smaller budget stays fair.
+
+## Real-data validation (Favorita)
+
+An additional experiment, separate from the pipeline: does the same approach
+(LightGBM Tweedie, separate perishable and non-perishable models, leak-free
+lags of at least 7 days) beat simple baselines on **real** grocery sales? It
+uses the Corporación Favorita dataset (Ecuador, Kaggle) and changes nothing in
+the main project's data, models or results.
+
+```bash
+# raw CSVs (train.csv, items.csv, stores.csv, holidays_events.csv, oil.csv,
+# transactions.csv) in data/favorita/ (not in git)
+python validation/favorita/run_validation.py --trials 30   # Optuna, max 30 trials per model
+python validation/favorita/run_validation.py --trials 0    # main project's tuned parameters
+```
+
+The first run reads `train.csv` (4.7 GB) in 5M-row chunks with explicit
+dtypes (about 15 s) and caches the subset and the feature table as parquet in
+`data/favorita/`; later runs reuse them. A full run with `--trials 0` takes
+about 2 minutes.
+
+- **Subset:** 1 Jan 2016 – 15 Aug 2017, 10 stores: the busiest store (by
+  transactions) in each of the 10 busiest cities: Quito (44), Guayaquil (24),
+  Cuenca (37), Ambato (50), Santo Domingo (5), Machala (40), Cayambe (11),
+  Latacunga (12), Manta (53), Daule (27).
+- **Cleaning:** `train.csv` only has rows with sales, so each store × item
+  series is filled with 0-sale days from its first sale in that store
+  (1.2M days filled); 759 negative sales (returns) clipped to 0; missing
+  `onpromotion` = False (none in this window). Days a store was closed (no
+  sales at all, e.g. 25 Dec and 1 Jan) count as 0 in the lags but are never
+  trained on or scored. `items.csv`'s `perishable` flag splits the two models.
+- **Items:** the full grid would be 17.8M rows (33,259 series), so each store
+  keeps its 1,500 best sellers, ranked on the training period only: 15,000
+  series (3,016 distinct items), **85.3% of all units sold**, 8.38M modelling
+  rows.
+- **Features:** the main project's lags and rolling stats
+  (`build_features.add_lag_and_rolling_features`), calendar, promotion flag,
+  holidays from `holidays_events.csv` (national for every store, regional by
+  state, local by city; `transferred=True` days are normal days and the
+  `Transfer` day is the holiday; `Bridge` and `Additional` days are holidays;
+  `Work Day` is a worked day; `Event` is its own flag), days to the next /
+  since the last holiday, WTI oil price (gaps forward-filled, lagged 7 days)
+  and an earthquake flag for 16 Apr – 16 May 2016.
+- **Split:** train to 31 Mar 2017 (6.33M rows), test 1 Apr – 15 Aug 2017
+  (2.05M rows), scored once. Tuning only ever sees the training period (fit to
+  24 Jan 2017, validate 1 Feb – 31 Mar 2017, a 7-day gap).
+- **Parameters used:** the main project's tuned parameters
+  (`models/params_<segment>.json`). An Optuna run (30 trials per model) was
+  stopped after 3 perishable and 0 non-perishable trials; with fewer than 10
+  trials the tuned parameters were used instead. `results.json` records this
+  (`parameters`, `parameters_note`).
+
+Test window, 7-day-ahead daily forecasts per store × item:
+
+| Segment | LightGBM WAPE | MASE | Bias | Seasonal naive | MA 7d | MA 28d |
+|---|---|---|---|---|---|---|
+| Perishable | **39.2%** | 0.759 | +0.0% | 48.5% | 45.5% | 45.4% |
+| Non-perishable | **51.5%** | 0.749 | −1.3% | 65.3% | 59.0% | 58.8% |
+| Combined | **47.0%** | 0.752 | −0.8% | 59.2% | 54.1% | 53.9% |
+
+- LightGBM beats every baseline in both segments and in **all 10 stores**
+  (store WAPE 37.1% Quito to 60.1% Latacunga; the best baseline per store is
+  4.1–9.6 points worse).
+- **Holidays vs normal days** (combined): 47.2% vs 47.0% WAPE (87,000 holiday
+  store-item-days, 12 holiday dates in the test window); perishable 41.2% vs
+  39.1%, non-perishable 50.6% vs 51.5%. Holidays cost almost no accuracy.
+- WAPE is much higher than on the synthetic data (about 10%) because real
+  store × item daily sales are small and noisy: the median kept series sells
+  5.3 units a day in the test window, and 47% sell under 5. MASE below 1 (0.75) means a quarter less error than the
+  seasonal naive forecast.
+
+Outputs (in git): `validation/favorita/outputs/reports/results.json` (every
+metric, row counts, stores, items, sales coverage, dates, parameters, run
+time) and `validation/favorita/outputs/figures/` `fig_wape_vs_baselines.png`,
+`fig_holiday_vs_normal.png`, `fig_actual_vs_pred.png` (300 dpi).
+`tests/test_favorita_validation.py` checks no leakage across the split date,
+no negative sales, the holiday mapping (e.g. 10 Aug 2017 transferred to
+11 Aug) and the results.json schema; the data checks skip without
+`data/favorita/`.
+
+**What it cannot validate:** Favorita has **no stock data**. Sales are not
+censored by stockouts in any visible way, so the demand recovery
+(un-censoring stockout days) and the stockout / overstock risk rule and its
+confusion matrix cannot be validated on it; they remain checked only on the
+synthetic data. Favorita validates the demand forecast alone.
 
 ## Key design choices
 

@@ -3,7 +3,9 @@ __pycache__/
 *.zip
 data/**/*.csv
 data/favorita/
+*.parquet
 outputs/
+!validation/favorita/outputs/
 models/*.txt
 .env
 .DS_Store
